@@ -1,0 +1,8 @@
+.env
+bot.log
+bot_state.json
+backtest_trades.csv
+__pycache__/
+*.pyc
+.venv/
+venv/
