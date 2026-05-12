@@ -1,44 +1,73 @@
 //@version=5
 // =============================================================
-//  SMC + Price Action Pro  |  by Kiro
-//  结合 SMC(聪明钱) + 价格行为 的综合交易指标
+//  SMC + Price Action Pro v2  |  by Kiro
+//  黄金 5 分钟优化版 + 多周期 + 交易时段过滤 + 新闻过滤
 // =============================================================
-indicator("SMC + Price Action Pro", shorttitle="SMC+PA Pro", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+indicator("SMC + Price Action Pro v2", shorttitle="SMC+PA v2", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ============ 【预设模式】 ============
+grp_preset = "【预设模式】"
+preset = input.string("黄金 5m", "交易品种预设", options=["黄金 5m", "黄金 15m", "BTC 15m", "BTC 1h", "股票日线", "自定义"], group=grp_preset, tooltip="选择预设会自动套用优化参数")
 
 // ============ 输入参数 ============
 grp_struct  = "【市场结构】"
-swingLen    = input.int(10, "Swing 周期", minval=2, group=grp_struct, tooltip="短线 5,波段 10-20")
+swingLenIn  = input.int(5,  "Swing 周期",    minval=2,  group=grp_struct)
 showBOS     = input.bool(true, "显示 BOS / CHoCH", group=grp_struct)
 
 grp_ob      = "【订单块 & FVG】"
 showOB      = input.bool(true, "显示订单块 (OB)", group=grp_ob)
 showFVG     = input.bool(true, "显示失衡区 (FVG)", group=grp_ob)
-maxOB       = input.int(5, "最多显示 OB 数量", minval=1, maxval=20, group=grp_ob)
-maxFVG      = input.int(5, "最多显示 FVG 数量", minval=1, maxval=20, group=grp_ob)
+maxOB       = input.int(5, "最多 OB 数量", minval=1, maxval=20, group=grp_ob)
+maxFVG      = input.int(5, "最多 FVG 数量", minval=1, maxval=20, group=grp_ob)
 
 grp_pa      = "【价格行为过滤】"
 usePinBar   = input.bool(true, "启用 Pin Bar", group=grp_pa)
 useEngulf   = input.bool(true, "启用吞没形态", group=grp_pa)
 useVolume   = input.bool(true, "启用成交量确认", group=grp_pa)
-volMult     = input.float(1.5, "成交量放大倍数", step=0.1, group=grp_pa)
+volMultIn   = input.float(2.0, "成交量放大倍数", step=0.1, group=grp_pa)
 
 grp_trend   = "【趋势过滤】"
 useEma      = input.bool(true, "启用 EMA 趋势过滤", group=grp_trend)
-emaFastLen  = input.int(21, "EMA 快线", group=grp_trend)
-emaSlowLen  = input.int(50, "EMA 慢线", group=grp_trend)
+emaFastIn   = input.int(20, "EMA 快线", group=grp_trend)
+emaSlowIn   = input.int(50, "EMA 慢线", group=grp_trend)
+
+grp_mtf     = "【多周期 MTF 过滤】"
+useMTF      = input.bool(true, "启用大周期趋势锁", group=grp_mtf, tooltip="只做与大周期一致的单")
+mtfTF       = input.timeframe("60", "大周期", options=["15", "30", "60", "240", "D"], group=grp_mtf)
 
 grp_risk    = "【风险管理】"
 atrLen      = input.int(14, "ATR 周期", group=grp_risk)
-slAtrMult   = input.float(1.5, "止损 ATR 倍数", step=0.1, group=grp_risk)
-rr1         = input.float(1.0, "TP1 风险回报比", step=0.1, group=grp_risk)
-rr2         = input.float(2.0, "TP2 风险回报比", step=0.1, group=grp_risk)
-rr3         = input.float(3.0, "TP3 风险回报比", step=0.1, group=grp_risk)
+slAtrMultIn = input.float(2.0, "止损 ATR 倍数", step=0.1, group=grp_risk)
+rr1In       = input.float(1.0, "TP1 RR", step=0.1, group=grp_risk)
+rr2In       = input.float(1.5, "TP2 RR", step=0.1, group=grp_risk)
+rr3In       = input.float(2.5, "TP3 RR", step=0.1, group=grp_risk)
 showZone    = input.bool(true, "显示入场区域", group=grp_risk)
+
+grp_session = "【交易时段过滤】"
+useSession  = input.bool(true, "启用交易时段过滤", group=grp_session, tooltip="只在伦敦/纽约盘发信号")
+sessionStr  = input.session("1400-2359", "活跃时段 (交易所时间)", group=grp_session, tooltip="黄金建议伦敦+美盘:1400-2359")
+avoidMonOpen = input.bool(true, "避开周一开盘 1 小时", group=grp_session)
+
+grp_news    = "【新闻/波动过滤】"
+useNewsFilter = input.bool(true, "启用高波动过滤", group=grp_news, tooltip="ATR 突然暴涨时暂停信号")
+atrSpikeMult = input.float(2.5, "ATR 暴涨阈值", step=0.1, group=grp_news, tooltip="当前 ATR > 均值 × 此倍数时暂停")
+
+// ============ 应用预设参数 ============
+// 预设可覆盖用户设置:swingLen, volMult, emaFast, emaSlow, slAtrMult, rr1/2/3
+swingLen   = preset == "黄金 5m" ? 5  : preset == "黄金 15m" ? 8  : preset == "BTC 15m" ? 8  : preset == "BTC 1h" ? 10 : preset == "股票日线" ? 10 : swingLenIn
+volMult    = preset == "黄金 5m" ? 2.0 : preset == "黄金 15m" ? 1.8 : preset == "BTC 15m" ? 1.5 : preset == "BTC 1h" ? 1.5 : preset == "股票日线" ? 1.3 : volMultIn
+emaFastLen = preset == "黄金 5m" ? 20 : preset == "黄金 15m" ? 21 : preset == "BTC 15m" ? 21 : preset == "BTC 1h" ? 21 : preset == "股票日线" ? 20 : emaFastIn
+emaSlowLen = preset == "黄金 5m" ? 50 : preset == "黄金 15m" ? 50 : preset == "BTC 15m" ? 50 : preset == "BTC 1h" ? 50 : preset == "股票日线" ? 50 : emaSlowIn
+slAtrMult  = preset == "黄金 5m" ? 2.0 : preset == "黄金 15m" ? 1.8 : preset == "BTC 15m" ? 1.5 : preset == "BTC 1h" ? 1.5 : preset == "股票日线" ? 1.5 : slAtrMultIn
+rr1        = preset == "黄金 5m" ? 1.0 : preset == "黄金 15m" ? 1.0 : preset == "BTC 15m" ? 1.0 : preset == "BTC 1h" ? 1.0 : preset == "股票日线" ? 1.0 : rr1In
+rr2        = preset == "黄金 5m" ? 1.5 : preset == "黄金 15m" ? 2.0 : preset == "BTC 15m" ? 2.0 : preset == "BTC 1h" ? 2.0 : preset == "股票日线" ? 2.0 : rr2In
+rr3        = preset == "黄金 5m" ? 2.5 : preset == "黄金 15m" ? 3.0 : preset == "BTC 15m" ? 3.0 : preset == "BTC 1h" ? 3.0 : preset == "股票日线" ? 3.0 : rr3In
 
 // ============ 基础指标 ============
 emaFast = ta.ema(close, emaFastLen)
 emaSlow = ta.ema(close, emaSlowLen)
 atrVal  = ta.atr(atrLen)
+atrAvg  = ta.sma(atrVal, 50)
 volAvg  = ta.sma(volume, 20)
 
 trendUp   = not useEma or (emaFast > emaSlow and close > emaFast)
@@ -46,6 +75,34 @@ trendDown = not useEma or (emaFast < emaSlow and close < emaFast)
 
 plot(useEma ? emaFast : na, "EMA Fast", color=color.new(color.orange, 0), linewidth=1)
 plot(useEma ? emaSlow : na, "EMA Slow", color=color.new(color.blue, 0), linewidth=2)
+
+// ============ 多周期 MTF 趋势 ============
+mtfEmaFast = request.security(syminfo.tickerid, mtfTF, ta.ema(close, emaFastLen), lookahead=barmerge.lookahead_off)
+mtfEmaSlow = request.security(syminfo.tickerid, mtfTF, ta.ema(close, emaSlowLen), lookahead=barmerge.lookahead_off)
+mtfClose   = request.security(syminfo.tickerid, mtfTF, close, lookahead=barmerge.lookahead_off)
+mtfTrendUp   = mtfEmaFast > mtfEmaSlow and mtfClose > mtfEmaFast
+mtfTrendDown = mtfEmaFast < mtfEmaSlow and mtfClose < mtfEmaFast
+
+// 15m / 1h 单独查询(用于信息面板展示)
+tfMid = "15"
+tfHigh = "60"
+midUp   = request.security(syminfo.tickerid, tfMid,  ta.ema(close, 21) > ta.ema(close, 50) and close > ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+midDn   = request.security(syminfo.tickerid, tfMid,  ta.ema(close, 21) < ta.ema(close, 50) and close < ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+highUp  = request.security(syminfo.tickerid, tfHigh, ta.ema(close, 21) > ta.ema(close, 50) and close > ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+highDn  = request.security(syminfo.tickerid, tfHigh, ta.ema(close, 21) < ta.ema(close, 50) and close < ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+
+// ============ 交易时段过滤 ============
+inSession = not useSession or not na(time(timeframe.period, sessionStr))
+monOpenBad = avoidMonOpen and dayofweek == dayofweek.monday and hour < 1  // 基于交易所开盘后 1 小时
+sessionOk = inSession and not monOpenBad
+
+// 背景:非活跃时段灰色提示
+bgcolor(useSession and not inSession ? color.new(color.gray, 92) : na)
+
+// ============ 新闻/高波动过滤 ============
+highVol = useNewsFilter and atrVal > atrAvg * atrSpikeMult
+// 背景:高波动时段红色警告
+bgcolor(highVol ? color.new(color.red, 88) : na)
 
 // ============ 市场结构:摆动高低点 ============
 ph = ta.pivothigh(high, swingLen, swingLen)
@@ -64,7 +121,6 @@ if not na(pl)
     lastPL := pl
     lastPLBar := bar_index - swingLen
 
-// BOS / CHoCH
 bosUp     = not na(lastPH) and close > lastPH and close[1] <= lastPH and trendDir == 1
 bosDown   = not na(lastPL) and close < lastPL and close[1] >= lastPL and trendDir == -1
 chochUp   = not na(lastPH) and close > lastPH and close[1] <= lastPH and trendDir != 1
@@ -75,7 +131,6 @@ if chochUp or bosUp
 if chochDown or bosDown
     trendDir := -1
 
-// 画 BOS / CHoCH
 if showBOS and bosUp
     line.new(lastPHBar, lastPH, bar_index, lastPH, color=color.green, width=1, style=line.style_dashed)
     label.new(bar_index, lastPH, "BOS", color=color.new(color.green, 70), style=label.style_label_down, textcolor=color.white, size=size.tiny)
@@ -165,9 +220,12 @@ volOk  = not useVolume or volume > volAvg * volMult
 paBull = (usePinBar and bullPin) or (useEngulf and bullEngulf)
 paBear = (usePinBar and bearPin) or (useEngulf and bearEngulf)
 
-// ============ 综合买卖信号 ============
-buySignal  = (chochUp or sweepLow) and paBull and trendUp and volOk
-sellSignal = (chochDown or sweepHigh) and paBear and trendDown and volOk
+// ============ 综合买卖信号(加入所有过滤) ============
+mtfOk_Buy  = not useMTF or mtfTrendUp
+mtfOk_Sell = not useMTF or mtfTrendDown
+
+buySignal  = (chochUp   or sweepLow)  and paBull and trendUp   and volOk and mtfOk_Buy  and sessionOk and not highVol
+sellSignal = (chochDown or sweepHigh) and paBear and trendDown and volOk and mtfOk_Sell and sessionOk and not highVol
 
 // ============ 风险管理:SL / TP ============
 var float entryPrice = na
@@ -198,10 +256,10 @@ if sellSignal
 // ============ 绘制买卖信号 ============
 plotshape(buySignal,  title="BUY",  style=shape.labelup,   location=location.belowbar, color=color.new(color.green, 0), textcolor=color.white, text="BUY",  size=size.normal)
 plotshape(sellSignal, title="SELL", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0),   textcolor=color.white, text="SELL", size=size.normal)
-plotshape(paBull and trendUp and not buySignal,    title="PA Bull", style=shape.triangleup,   location=location.belowbar, color=color.new(color.green, 50), size=size.tiny)
-plotshape(paBear and trendDown and not sellSignal, title="PA Bear", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 50),   size=size.tiny)
+plotshape(paBull and trendUp and not buySignal and sessionOk and not highVol,    title="PA Bull", style=shape.triangleup,   location=location.belowbar, color=color.new(color.green, 50), size=size.tiny)
+plotshape(paBear and trendDown and not sellSignal and sessionOk and not highVol, title="PA Bear", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 50),   size=size.tiny)
 
-// ============ 绘制 SL / TP 水平线 + 入场区域 ============
+// ============ 绘制 SL / TP + 入场区域 ============
 var line  slLine  = na
 var line  tp1Line = na
 var line  tp2Line = na
@@ -247,35 +305,69 @@ if buySignal or sellSignal
     tp2Lbl := label.new(bar_index + 30, tp2Price,   "TP2: "   + str.tostring(tp2Price,   format.mintick), color=color.new(color.green, 10), textcolor=color.white, style=label.style_label_left, size=size.small)
     tp3Lbl := label.new(bar_index + 30, tp3Price,   "TP3: "   + str.tostring(tp3Price,   format.mintick), color=color.green,  textcolor=color.white, style=label.style_label_left, size=size.small)
 
-// ============ 信息面板 ============
-var table infoPanel = table.new(position.top_right, 2, 7, border_width=1)
+// ============ 信息面板(含 MTF) ============
+var table infoPanel = table.new(position.top_right, 2, 11, border_width=1)
 
 if barstate.islast
-    trendTxt = trendUp ? "多头" : trendDown ? "空头" : "震荡"
-    trendCol = trendUp ? color.green : trendDown ? color.red : color.gray
-    lastSig  = posDir == 1 ? "LONG" : posDir == -1 ? "SHORT" : "-"
-    sigCol   = posDir == 1 ? color.green : posDir == -1 ? color.red : color.gray
+    curTxt = trendUp ? "多头" : trendDown ? "空头" : "震荡"
+    curCol = trendUp ? color.green : trendDown ? color.red : color.gray
+    midTxt = midUp ? "多头" : midDn ? "空头" : "震荡"
+    midCol = midUp ? color.green : midDn ? color.red : color.gray
+    highTxt = highUp ? "多头" : highDn ? "空头" : "震荡"
+    highCol = highUp ? color.green : highDn ? color.red : color.gray
 
-    table.cell(infoPanel, 0, 0, "SMC + PA Pro", bgcolor=color.navy, text_color=color.white, text_size=size.normal)
+    lastSig = posDir == 1 ? "LONG" : posDir == -1 ? "SHORT" : "-"
+    sigCol  = posDir == 1 ? color.green : posDir == -1 ? color.red : color.gray
+
+    sessTxt = sessionOk ? "活跃 ✓" : "休市 ✗"
+    sessCol = sessionOk ? color.green : color.gray
+    newsTxt = highVol ? "高波动 ⚠" : "正常 ✓"
+    newsCol = highVol ? color.red : color.green
+
+    // 对齐判断
+    alignTxt = trendUp and midUp and highUp ? "三线多头 ★" : trendDown and midDn and highDn ? "三线空头 ★" : "不一致"
+    alignCol = (trendUp and midUp and highUp) or (trendDown and midDn and highDn) ? color.yellow : color.gray
+
+    table.cell(infoPanel, 0, 0, "SMC+PA v2", bgcolor=color.navy, text_color=color.white, text_size=size.normal)
     table.cell(infoPanel, 1, 0, syminfo.ticker, bgcolor=color.navy, text_color=color.white, text_size=size.normal)
-    table.cell(infoPanel, 0, 1, "趋势", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    table.cell(infoPanel, 1, 1, trendTxt, bgcolor=color.new(trendCol, 70), text_color=color.white, text_size=size.small)
-    table.cell(infoPanel, 0, 2, "信号", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    table.cell(infoPanel, 1, 2, lastSig, bgcolor=color.new(sigCol, 70), text_color=color.white, text_size=size.small)
-    table.cell(infoPanel, 0, 3, "入场", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    table.cell(infoPanel, 1, 3, na(entryPrice) ? "-" : str.tostring(entryPrice, format.mintick), text_color=color.yellow, text_size=size.small)
-    table.cell(infoPanel, 0, 4, "止损", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    table.cell(infoPanel, 1, 4, na(slPrice) ? "-" : str.tostring(slPrice, format.mintick), text_color=color.red, text_size=size.small)
-    table.cell(infoPanel, 0, 5, "TP1/2/3", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    tpTxt = na(tp1Price) ? "-" : str.tostring(tp1Price, format.mintick) + " / " + str.tostring(tp2Price, format.mintick) + " / " + str.tostring(tp3Price, format.mintick)
-    table.cell(infoPanel, 1, 5, tpTxt, text_color=color.green, text_size=size.small)
-    table.cell(infoPanel, 0, 6, "ATR", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    table.cell(infoPanel, 1, 6, str.tostring(atrVal, format.mintick), text_color=color.white, text_size=size.small)
+
+    table.cell(infoPanel, 0, 1, "预设", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 1, 1, preset, text_color=color.aqua, text_size=size.small)
+
+    table.cell(infoPanel, 0, 2, "当前 TF", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 1, 2, curTxt, bgcolor=color.new(curCol, 70), text_color=color.white, text_size=size.small)
+
+    table.cell(infoPanel, 0, 3, "15m", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 1, 3, midTxt, bgcolor=color.new(midCol, 70), text_color=color.white, text_size=size.small)
+
+    table.cell(infoPanel, 0, 4, "1H", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 1, 4, highTxt, bgcolor=color.new(highCol, 70), text_color=color.white, text_size=size.small)
+
+    table.cell(infoPanel, 0, 5, "多周期对齐", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 1, 5, alignTxt, bgcolor=color.new(alignCol, 60), text_color=color.black, text_size=size.small)
+
+    table.cell(infoPanel, 0, 6, "时段", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 1, 6, sessTxt, bgcolor=color.new(sessCol, 70), text_color=color.white, text_size=size.small)
+
+    table.cell(infoPanel, 0, 7, "波动状态", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 1, 7, newsTxt, bgcolor=color.new(newsCol, 70), text_color=color.white, text_size=size.small)
+
+    table.cell(infoPanel, 0, 8, "信号", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 1, 8, lastSig, bgcolor=color.new(sigCol, 70), text_color=color.white, text_size=size.small)
+
+    table.cell(infoPanel, 0, 9, "入场 / 止损", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    epslTxt = na(entryPrice) ? "-" : str.tostring(entryPrice, format.mintick) + " / " + str.tostring(slPrice, format.mintick)
+    table.cell(infoPanel, 1, 9, epslTxt, text_color=color.yellow, text_size=size.small)
+
+    table.cell(infoPanel, 0, 10, "TP1/2/3", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    tpTxt = na(tp1Price) ? "-" : str.tostring(tp1Price, format.mintick) + "/" + str.tostring(tp2Price, format.mintick) + "/" + str.tostring(tp3Price, format.mintick)
+    table.cell(infoPanel, 1, 10, tpTxt, text_color=color.green, text_size=size.small)
 
 // ============ 警报 ============
-alertcondition(buySignal,  title="买入信号", message="SMC+PA 买入信号")
-alertcondition(sellSignal, title="卖出信号", message="SMC+PA 卖出信号")
+alertcondition(buySignal,  title="买入信号", message="SMC+PA v2 买入信号")
+alertcondition(sellSignal, title="卖出信号", message="SMC+PA v2 卖出信号")
 alertcondition(bosUp,      title="BOS 向上", message="BOS Up")
 alertcondition(bosDown,    title="BOS 向下", message="BOS Down")
 alertcondition(chochUp,    title="CHoCH 看涨", message="CHoCH Up")
 alertcondition(chochDown,  title="CHoCH 看跌", message="CHoCH Down")
+alertcondition(highVol,    title="高波动警告", message="ATR 暴涨,暂停交易")
