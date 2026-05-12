@@ -2,6 +2,7 @@
 // =============================================================
 //  SMC + Price Action Strategy (回测专用版)  |  by Kiro
 //  用于在 TradingView 的 Strategy Tester 中统计胜率、盈亏等真实数据
+//  支持预设: 黄金 / BTC / ETH 多周期
 // =============================================================
 strategy("SMC + PA Strategy (回测版)", shorttitle="SMC+PA Strat",
      overlay=true,
@@ -18,31 +19,52 @@ strategy("SMC + PA Strategy (回测版)", shorttitle="SMC+PA Strat",
 
 // ============ 预设 ============
 grp_preset = "【预设模式】"
-preset  = input.string("黄金 5m", "交易品种预设", options=["黄金 5m", "黄金 15m", "BTC 15m", "BTC 1h", "自定义"], group=grp_preset)
+preset  = input.string("黄金 5m", "交易品种预设", options=["黄金 5m", "黄金 15m", "BTC 1h", "BTC 4h", "ETH 1h", "ETH 4h", "自定义"], group=grp_preset, tooltip="选择后自动套用最优参数")
 sigMode = input.string("平衡", "信号频率模式", options=["宽松", "平衡", "严格"], group=grp_preset)
 
-// ============ 核心参数 ============
-grp_core = "【核心参数】"
-swingLen = input.int(5, "Swing 周期", minval=2, group=grp_core)
-volMult  = input.float(1.5, "成交量倍数", step=0.1, group=grp_core)
-emaFastLen = input.int(20, "EMA 快", group=grp_core)
-emaSlowLen = input.int(50, "EMA 慢", group=grp_core)
+// ============ 核心参数(自定义时使用) ============
+grp_core = "【核心参数(预设会覆盖)】"
+swingLenIn  = input.int(5, "Swing 周期", minval=2, group=grp_core)
+volMultIn   = input.float(1.5, "成交量倍数", step=0.1, group=grp_core)
+emaFastIn   = input.int(20, "EMA 快", group=grp_core)
+emaSlowIn   = input.int(50, "EMA 慢", group=grp_core)
 
 grp_risk = "【风险管理】"
-atrLen    = input.int(14, "ATR 周期", group=grp_risk)
-slAtrMult = input.float(2.0, "止损 ATR 倍数", step=0.1, group=grp_risk)
-rr1       = input.float(1.0, "TP1 RR", step=0.1, group=grp_risk)
-rr2       = input.float(1.5, "TP2 RR", step=0.1, group=grp_risk)
-rr3       = input.float(2.5, "TP3 RR", step=0.1, group=grp_risk)
+atrLen        = input.int(14, "ATR 周期", group=grp_risk)
+slAtrMultIn   = input.float(2.0, "止损 ATR 倍数", step=0.1, group=grp_risk)
+rr1In         = input.float(1.0, "TP1 RR", step=0.1, group=grp_risk)
+rr2In         = input.float(1.5, "TP2 RR", step=0.1, group=grp_risk)
+rr3In         = input.float(2.5, "TP3 RR", step=0.1, group=grp_risk)
 usePartialExit = input.bool(true, "分批止盈(TP1 平 50%,TP2 平 30%,TP3 平 20%)", group=grp_risk)
 
 grp_filter = "【过滤器】"
-useSession    = input.bool(true, "启用时段过滤", group=grp_filter)
+useSessionIn  = input.bool(true,  "启用时段过滤(加密货币会被预设关闭)", group=grp_filter)
 sessionStr    = input.session("1400-2359", "活跃时段", group=grp_filter)
 useNewsFilter = input.bool(true, "启用高波动过滤", group=grp_filter)
 atrSpikeMult  = input.float(2.5, "ATR 暴涨阈值", step=0.1, group=grp_filter)
 useMTF        = input.bool(false, "启用大周期趋势锁", group=grp_filter)
 mtfTF         = input.timeframe("60", "大周期", group=grp_filter)
+
+grp_date = "【回测时间范围】"
+useDateRange  = input.bool(true, "启用自定义时间范围", group=grp_date, tooltip="限定只在某段时间内回测")
+startDate     = input.time(timestamp("2026-03-12 00:00"), "开始时间", group=grp_date)
+endDate       = input.time(timestamp("2026-05-12 23:59"), "结束时间", group=grp_date)
+inDateRange   = not useDateRange or (time >= startDate and time <= endDate)
+
+// ============ 应用预设参数 ============
+// 预设覆盖:swingLen / volMult / emaFast / emaSlow / slAtrMult / rr1-3 / useSession
+isCrypto   = preset == "BTC 1h" or preset == "BTC 4h" or preset == "ETH 1h" or preset == "ETH 4h"
+
+swingLen   = preset == "黄金 5m" ? 5 : preset == "黄金 15m" ? 8 : preset == "BTC 1h" ? 10 : preset == "BTC 4h" ? 12 : preset == "ETH 1h" ? 10 : preset == "ETH 4h" ? 12 : swingLenIn
+volMult    = preset == "黄金 5m" ? 1.5 : preset == "黄金 15m" ? 1.5 : preset == "BTC 1h" ? 1.5 : preset == "BTC 4h" ? 1.3 : preset == "ETH 1h" ? 1.5 : preset == "ETH 4h" ? 1.3 : volMultIn
+emaFastLen = preset == "黄金 5m" ? 20 : preset == "黄金 15m" ? 21 : preset == "BTC 1h" ? 21 : preset == "BTC 4h" ? 21 : preset == "ETH 1h" ? 21 : preset == "ETH 4h" ? 21 : emaFastIn
+emaSlowLen = preset == "黄金 5m" ? 50 : preset == "黄金 15m" ? 50 : preset == "BTC 1h" ? 50 : preset == "BTC 4h" ? 55 : preset == "ETH 1h" ? 50 : preset == "ETH 4h" ? 55 : emaSlowIn
+slAtrMult  = preset == "黄金 5m" ? 2.0 : preset == "黄金 15m" ? 1.8 : preset == "BTC 1h" ? 1.5 : preset == "BTC 4h" ? 1.8 : preset == "ETH 1h" ? 1.5 : preset == "ETH 4h" ? 1.8 : slAtrMultIn
+rr1        = preset == "黄金 5m" ? 1.0 : preset == "黄金 15m" ? 1.0 : preset == "BTC 1h" ? 1.0 : preset == "BTC 4h" ? 1.0 : preset == "ETH 1h" ? 1.0 : preset == "ETH 4h" ? 1.0 : rr1In
+rr2        = preset == "黄金 5m" ? 1.5 : preset == "黄金 15m" ? 2.0 : preset == "BTC 1h" ? 2.0 : preset == "BTC 4h" ? 2.5 : preset == "ETH 1h" ? 2.0 : preset == "ETH 4h" ? 2.5 : rr2In
+rr3        = preset == "黄金 5m" ? 2.5 : preset == "黄金 15m" ? 3.0 : preset == "BTC 1h" ? 3.0 : preset == "BTC 4h" ? 4.0 : preset == "ETH 1h" ? 3.0 : preset == "ETH 4h" ? 4.0 : rr3In
+// 加密货币 24h 交易,自动关闭时段过滤
+useSession = isCrypto ? false : useSessionIn
 
 // ============ 基础指标 ============
 emaFast = ta.ema(close, emaFastLen)
@@ -69,7 +91,7 @@ mtfOkS  = not useMTF or mtfDn
 // ============ 时段 & 高波动 ============
 inSession = not useSession or not na(time(timeframe.period, sessionStr))
 highVol   = useNewsFilter and atrVal > atrAvg * atrSpikeMult
-filtOk    = inSession and not highVol
+filtOk    = inSession and not highVol and inDateRange
 
 // ============ 结构 ============
 ph = ta.pivothigh(high, swingLen, swingLen)
@@ -150,3 +172,16 @@ plotshape(sellSignal, title="SELL", style=shape.labeldown, location=location.abo
 
 bgcolor(useSession and not inSession ? color.new(color.gray, 92) : na)
 bgcolor(highVol ? color.new(color.red, 88) : na)
+bgcolor(useDateRange and not inDateRange ? color.new(color.gray, 80) : na)
+
+// ============ 预设信息显示 ============
+var table presetTable = table.new(position.top_right, 2, 4, border_width=1)
+if barstate.islast
+    table.cell(presetTable, 0, 0, "回测设置", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    table.cell(presetTable, 1, 0, syminfo.ticker + " " + timeframe.period, bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    table.cell(presetTable, 0, 1, "预设", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.tiny)
+    table.cell(presetTable, 1, 1, preset + " | " + sigMode, text_color=color.aqua, text_size=size.tiny)
+    table.cell(presetTable, 0, 2, "SL 倍数", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.tiny)
+    table.cell(presetTable, 1, 2, str.tostring(slAtrMult), text_color=color.white, text_size=size.tiny)
+    table.cell(presetTable, 0, 3, "TP1/2/3 RR", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.tiny)
+    table.cell(presetTable, 1, 3, str.tostring(rr1) + "/" + str.tostring(rr2) + "/" + str.tostring(rr3), text_color=color.white, text_size=size.tiny)
