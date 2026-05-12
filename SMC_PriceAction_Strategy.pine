@@ -1,10 +1,10 @@
 //@version=5
 // =============================================================
-//  SMC + Price Action Strategy (回测专用版)  |  by Kiro
-//  用于在 TradingView 的 Strategy Tester 中统计胜率、盈亏等真实数据
-//  支持预设: 黄金 / BTC / ETH 多周期
+//  SMC + Price Action Strategy (ETH 专用回测版)  |  by Kiro
+//  用于在 TradingView 的 Strategy Tester 中统计胜率、盈亏
+//  仅支持 ETH: 1H / 4H / 日线
 // =============================================================
-strategy("SMC + PA Strategy (回测版)", shorttitle="SMC+PA Strat",
+strategy("SMC + PA Strategy (ETH 回测版)", shorttitle="SMC+PA ETH",
      overlay=true,
      initial_capital=10000,
      default_qty_type=strategy.percent_of_equity,
@@ -18,59 +18,50 @@ strategy("SMC + PA Strategy (回测版)", shorttitle="SMC+PA Strat",
      max_boxes_count=500, max_lines_count=500, max_labels_count=500)
 
 // ============ 预设 ============
-grp_preset = "【预设模式】"
-preset  = input.string("ETH 4h", "交易品种预设", options=["黄金 5m", "黄金 15m", "BTC 1h", "BTC 4h", "BTC 日线", "ETH 1h", "ETH 4h", "ETH 日线", "自定义"], group=grp_preset, tooltip="选择后自动套用最优参数")
-sigMode = input.string("纯趋势", "信号频率模式", options=["宽松", "平衡", "严格", "纯趋势"], group=grp_preset, tooltip="纯趋势=只做 BOS 顺势单,拒绝 CHoCH 反转(推荐加密货币)")
+grp_preset = "【ETH 专用预设】"
+preset  = input.string("ETH 4h", "ETH 周期预设", options=["ETH 1h", "ETH 4h", "ETH 日线", "自定义"], group=grp_preset, tooltip="自动套用该周期的最优参数")
+sigMode = input.string("平衡", "信号频率模式", options=["宽松", "平衡", "严格", "纯趋势"], group=grp_preset, tooltip="宽松=信号多;平衡=推荐;严格=少但精;纯趋势=只做 BOS 顺势")
 
 // ============ 核心参数(自定义时使用) ============
 grp_core = "【核心参数(预设会覆盖)】"
-swingLenIn  = input.int(5, "Swing 周期", minval=2, group=grp_core)
-volMultIn   = input.float(1.5, "成交量倍数", step=0.1, group=grp_core)
-emaFastIn   = input.int(20, "EMA 快", group=grp_core)
+swingLenIn  = input.int(10, "Swing 周期", minval=2, group=grp_core)
+volMultIn   = input.float(1.2, "成交量倍数", step=0.1, group=grp_core)
+emaFastIn   = input.int(21, "EMA 快", group=grp_core)
 emaSlowIn   = input.int(50, "EMA 慢", group=grp_core)
+useVolume   = input.bool(true, "启用成交量确认", group=grp_core, tooltip="关闭可以显著增加信号数量")
 
 grp_risk = "【风险管理】"
 atrLen        = input.int(14, "ATR 周期", group=grp_risk)
 slAtrMultIn   = input.float(2.0, "止损 ATR 倍数", step=0.1, group=grp_risk)
 rr1In         = input.float(1.0, "TP1 RR", step=0.1, group=grp_risk)
-rr2In         = input.float(1.5, "TP2 RR", step=0.1, group=grp_risk)
-rr3In         = input.float(2.5, "TP3 RR", step=0.1, group=grp_risk)
+rr2In         = input.float(2.0, "TP2 RR", step=0.1, group=grp_risk)
+rr3In         = input.float(3.0, "TP3 RR", step=0.1, group=grp_risk)
 usePartialExit = input.bool(true, "分批止盈(TP1 平 50%,TP2 平 30%,TP3 平 20%)", group=grp_risk)
 
-grp_filter = "【过滤器】"
-useSessionIn  = input.bool(true,  "启用时段过滤(加密货币会被预设关闭)", group=grp_filter)
-sessionStr    = input.session("1400-2359", "活跃时段", group=grp_filter)
-useNewsFilter = input.bool(true, "启用高波动过滤", group=grp_filter)
-atrSpikeMult  = input.float(2.5, "ATR 暴涨阈值", step=0.1, group=grp_filter)
-useMTFIn      = input.bool(false, "启用大周期趋势锁", group=grp_filter)
-mtfTFIn       = input.timeframe("60", "大周期", group=grp_filter)
+grp_filter = "【过滤器(建议先都关闭再测)】"
+useNewsFilter = input.bool(false, "启用高波动过滤", group=grp_filter)
+atrSpikeMult  = input.float(3.0, "ATR 暴涨阈值", step=0.1, group=grp_filter)
+useMTFIn      = input.bool(false, "启用大周期趋势锁", group=grp_filter, tooltip="开启后信号会少 50-70%")
+mtfTFIn       = input.timeframe("240", "大周期", group=grp_filter)
 
 grp_date = "【回测时间范围】"
-useDateRange  = input.bool(true, "启用自定义时间范围", group=grp_date, tooltip="限定只在某段时间内回测")
+useDateRange  = input.bool(false, "启用自定义时间范围", group=grp_date, tooltip="关闭=用全部历史数据")
 startDate     = input.time(timestamp("2026-03-12 00:00"), "开始时间", group=grp_date)
 endDate       = input.time(timestamp("2026-05-12 23:59"), "结束时间", group=grp_date)
 inDateRange   = not useDateRange or (time >= startDate and time <= endDate)
 
-// ============ 应用预设参数 ============
-// 预设覆盖:swingLen / volMult / emaFast / emaSlow / slAtrMult / rr1-3 / useSession / useMTF
-isCrypto   = preset == "BTC 1h" or preset == "BTC 4h" or preset == "BTC 日线" or preset == "ETH 1h" or preset == "ETH 4h" or preset == "ETH 日线"
-isETH      = preset == "ETH 1h" or preset == "ETH 4h" or preset == "ETH 日线"
-isBTC      = preset == "BTC 1h" or preset == "BTC 4h" or preset == "BTC 日线"
-
-swingLen   = preset == "黄金 5m" ? 5 : preset == "黄金 15m" ? 8 : preset == "BTC 1h" ? 10 : preset == "BTC 4h" ? 12 : preset == "BTC 日线" ? 15 : preset == "ETH 1h" ? 10 : preset == "ETH 4h" ? 12 : preset == "ETH 日线" ? 15 : swingLenIn
-volMult    = preset == "黄金 5m" ? 1.5 : preset == "黄金 15m" ? 1.5 : preset == "BTC 1h" ? 1.5 : preset == "BTC 4h" ? 1.3 : preset == "BTC 日线" ? 1.2 : preset == "ETH 1h" ? 1.5 : preset == "ETH 4h" ? 1.3 : preset == "ETH 日线" ? 1.2 : volMultIn
-emaFastLen = preset == "黄金 5m" ? 20 : preset == "黄金 15m" ? 21 : preset == "BTC 1h" ? 21 : preset == "BTC 4h" ? 21 : preset == "BTC 日线" ? 20 : preset == "ETH 1h" ? 21 : preset == "ETH 4h" ? 21 : preset == "ETH 日线" ? 20 : emaFastIn
-emaSlowLen = preset == "黄金 5m" ? 50 : preset == "黄金 15m" ? 50 : preset == "BTC 1h" ? 50 : preset == "BTC 4h" ? 55 : preset == "BTC 日线" ? 50 : preset == "ETH 1h" ? 50 : preset == "ETH 4h" ? 55 : preset == "ETH 日线" ? 50 : emaSlowIn
-slAtrMult  = preset == "黄金 5m" ? 2.0 : preset == "黄金 15m" ? 1.8 : preset == "BTC 1h" ? 1.5 : preset == "BTC 4h" ? 1.8 : preset == "BTC 日线" ? 2.0 : preset == "ETH 1h" ? 1.5 : preset == "ETH 4h" ? 2.0 : preset == "ETH 日线" ? 2.5 : slAtrMultIn
-rr1        = preset == "黄金 5m" ? 1.0 : preset == "黄金 15m" ? 1.0 : preset == "BTC 1h" ? 1.0 : preset == "BTC 4h" ? 1.0 : preset == "BTC 日线" ? 1.5 : preset == "ETH 1h" ? 1.0 : preset == "ETH 4h" ? 1.5 : preset == "ETH 日线" ? 2.0 : rr1In
-rr2        = preset == "黄金 5m" ? 1.5 : preset == "黄金 15m" ? 2.0 : preset == "BTC 1h" ? 2.0 : preset == "BTC 4h" ? 2.5 : preset == "BTC 日线" ? 3.0 : preset == "ETH 1h" ? 2.0 : preset == "ETH 4h" ? 3.0 : preset == "ETH 日线" ? 4.0 : rr2In
-rr3        = preset == "黄金 5m" ? 2.5 : preset == "黄金 15m" ? 3.0 : preset == "BTC 1h" ? 3.0 : preset == "BTC 4h" ? 4.0 : preset == "BTC 日线" ? 5.0 : preset == "ETH 1h" ? 3.0 : preset == "ETH 4h" ? 5.0 : preset == "ETH 日线" ? 7.0 : rr3In
-// 加密货币 24h 交易,自动关闭时段过滤
-useSession = isCrypto ? false : useSessionIn
-// 加密货币默认开启 MTF 趋势锁(避免逆势)
-useMTF     = isCrypto ? true : useMTFIn
-// 加密货币自动设置大周期: 1H -> 4H, 4H -> 1D, 日线 -> 1W
-mtfTF      = preset == "BTC 1h" or preset == "ETH 1h" ? "240" : preset == "BTC 4h" or preset == "ETH 4h" ? "D" : preset == "BTC 日线" or preset == "ETH 日线" ? "W" : mtfTFIn
+// ============ 应用 ETH 预设参数 ============
+swingLen   = preset == "ETH 1h" ? 8  : preset == "ETH 4h" ? 10 : preset == "ETH 日线" ? 12 : swingLenIn
+volMult    = preset == "ETH 1h" ? 1.2 : preset == "ETH 4h" ? 1.2 : preset == "ETH 日线" ? 1.0 : volMultIn
+emaFastLen = preset == "ETH 1h" ? 21 : preset == "ETH 4h" ? 21 : preset == "ETH 日线" ? 20 : emaFastIn
+emaSlowLen = preset == "ETH 1h" ? 50 : preset == "ETH 4h" ? 55 : preset == "ETH 日线" ? 50 : emaSlowIn
+slAtrMult  = preset == "ETH 1h" ? 1.5 : preset == "ETH 4h" ? 2.0 : preset == "ETH 日线" ? 2.5 : slAtrMultIn
+rr1        = preset == "ETH 1h" ? 1.0 : preset == "ETH 4h" ? 1.5 : preset == "ETH 日线" ? 2.0 : rr1In
+rr2        = preset == "ETH 1h" ? 2.0 : preset == "ETH 4h" ? 3.0 : preset == "ETH 日线" ? 4.0 : rr2In
+rr3        = preset == "ETH 1h" ? 3.0 : preset == "ETH 4h" ? 5.0 : preset == "ETH 日线" ? 7.0 : rr3In
+// MTF 改为完全可选,不再强制
+useMTF     = useMTFIn
+mtfTF      = mtfTFIn
 
 // ============ 基础指标 ============
 emaFast = ta.ema(close, emaFastLen)
@@ -88,16 +79,14 @@ plot(emaSlow, "EMA Slow", color=color.blue, linewidth=2)
 // ============ MTF ============
 mtfEmaFast = request.security(syminfo.tickerid, mtfTF, ta.ema(close, emaFastLen), lookahead=barmerge.lookahead_off)
 mtfEmaSlow = request.security(syminfo.tickerid, mtfTF, ta.ema(close, emaSlowLen), lookahead=barmerge.lookahead_off)
-mtfClose   = request.security(syminfo.tickerid, mtfTF, close, lookahead=barmerge.lookahead_off)
-mtfUp   = mtfEmaFast > mtfEmaSlow and mtfClose > mtfEmaFast
-mtfDn   = mtfEmaFast < mtfEmaSlow and mtfClose < mtfEmaFast
+mtfUp   = mtfEmaFast > mtfEmaSlow
+mtfDn   = mtfEmaFast < mtfEmaSlow
 mtfOkB  = not useMTF or mtfUp
 mtfOkS  = not useMTF or mtfDn
 
-// ============ 时段 & 高波动 ============
-inSession = not useSession or not na(time(timeframe.period, sessionStr))
+// ============ 高波动 ============
 highVol   = useNewsFilter and atrVal > atrAvg * atrSpikeMult
-filtOk    = inSession and not highVol and inDateRange
+filtOk    = not highVol and inDateRange
 
 // ============ 结构 ============
 ph = ta.pivothigh(high, swingLen, swingLen)
@@ -127,23 +116,30 @@ sweepLow  = not na(lastPL) and low  < lastPL and close > lastPL
 bodySize  = math.abs(close - open)
 upperWick = high - math.max(close, open)
 lowerWick = math.min(close, open) - low
-bullPin   = lowerWick > bodySize * 2 and upperWick < bodySize
-bearPin   = upperWick > bodySize * 2 and lowerWick < bodySize
+bullPin   = lowerWick > bodySize * 1.5 and upperWick < bodySize
+bearPin   = upperWick > bodySize * 1.5 and lowerWick < bodySize
 bullEng   = close > open and close[1] < open[1] and close > open[1] and open < close[1]
 bearEng   = close < open and close[1] > open[1] and close < open[1] and open > close[1]
 
-volOk  = volume > volAvg * volMult
+volOk  = not useVolume or volume > volAvg * volMult
 paBull = bullPin or bullEng
 paBear = bearPin or bearEng
 
 structBuy  = chochUp   or sweepLow   or bosUp
 structSell = chochDown or sweepHigh  or bosDown
-// 纯趋势模式:只看 BOS(顺势突破),完全拒绝 CHoCH 反转和扫荡
 trendBuy   = bosUp
 trendSell  = bosDown
 
-buySignal  = sigMode == "纯趋势" ? (trendBuy  and paBull and trendUp   and volOk and filtOk and mtfOkB) : sigMode == "宽松" ? (paBull and trendUp   and volOk and filtOk and mtfOkB) : sigMode == "平衡" ? ((structBuy  or paBull) and trendUp   and volOk and filtOk and mtfOkB) : (structBuy  and paBull and trendUp   and volOk and filtOk and mtfOkB)
-sellSignal = sigMode == "纯趋势" ? (trendSell and paBear and trendDown and volOk and filtOk and mtfOkS) : sigMode == "宽松" ? (paBear and trendDown and volOk and filtOk and mtfOkS) : sigMode == "平衡" ? ((structSell or paBear) and trendDown and volOk and filtOk and mtfOkS) : (structSell and paBear and trendDown and volOk and filtOk and mtfOkS)
+// ============ 信号(分 4 个模式) ============
+// 宽松: 趋势 + PA,不要结构
+// 平衡: 趋势 + (结构 或 PA)
+// 严格: 趋势 + 结构 + PA
+// 纯趋势: 趋势 + BOS(顺势突破) + PA
+buyBase  = trendUp   and volOk and filtOk and mtfOkB
+sellBase = trendDown and volOk and filtOk and mtfOkS
+
+buySignal  = sigMode == "宽松" ? (paBull and buyBase) : sigMode == "平衡" ? ((structBuy  or paBull) and buyBase) : sigMode == "严格" ? (structBuy  and paBull and buyBase) : (trendBuy  and paBull and buyBase)
+sellSignal = sigMode == "宽松" ? (paBear and sellBase) : sigMode == "平衡" ? ((structSell or paBear) and sellBase) : sigMode == "严格" ? (structSell and paBear and sellBase) : (trendSell and paBear and sellBase)
 
 // ============ 策略执行 ============
 longSL  = math.min(low, low[1], low[2]) - atrVal * slAtrMult
@@ -179,14 +175,13 @@ if sellSignal and strategy.position_size == 0
 plotshape(buySignal,  title="BUY",  style=shape.labelup,   location=location.belowbar, color=color.green, textcolor=color.white, text="BUY", size=size.small)
 plotshape(sellSignal, title="SELL", style=shape.labeldown, location=location.abovebar, color=color.red,   textcolor=color.white, text="SELL", size=size.small)
 
-bgcolor(useSession and not inSession ? color.new(color.gray, 92) : na)
 bgcolor(highVol ? color.new(color.red, 88) : na)
 bgcolor(useDateRange and not inDateRange ? color.new(color.gray, 80) : na)
 
-// ============ 预设信息显示 ============
-var table presetTable = table.new(position.top_right, 2, 4, border_width=1)
+// ============ 信息面板 ============
+var table presetTable = table.new(position.top_right, 2, 6, border_width=1)
 if barstate.islast
-    table.cell(presetTable, 0, 0, "回测设置", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    table.cell(presetTable, 0, 0, "ETH 回测", bgcolor=color.navy, text_color=color.white, text_size=size.small)
     table.cell(presetTable, 1, 0, syminfo.ticker + " " + timeframe.period, bgcolor=color.navy, text_color=color.white, text_size=size.small)
     table.cell(presetTable, 0, 1, "预设", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.tiny)
     table.cell(presetTable, 1, 1, preset + " | " + sigMode, text_color=color.aqua, text_size=size.tiny)
@@ -194,3 +189,7 @@ if barstate.islast
     table.cell(presetTable, 1, 2, str.tostring(slAtrMult), text_color=color.white, text_size=size.tiny)
     table.cell(presetTable, 0, 3, "TP1/2/3 RR", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.tiny)
     table.cell(presetTable, 1, 3, str.tostring(rr1) + "/" + str.tostring(rr2) + "/" + str.tostring(rr3), text_color=color.white, text_size=size.tiny)
+    table.cell(presetTable, 0, 4, "成交量过滤", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.tiny)
+    table.cell(presetTable, 1, 4, useVolume ? "开 " + str.tostring(volMult) + "x" : "关闭", text_color=color.white, text_size=size.tiny)
+    table.cell(presetTable, 0, 5, "MTF 锁", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.tiny)
+    table.cell(presetTable, 1, 5, useMTF ? "开 " + mtfTF : "关闭", text_color=color.white, text_size=size.tiny)
