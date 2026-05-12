@@ -8,6 +8,7 @@ indicator("SMC + Price Action Pro v2", shorttitle="SMC+PA v2", overlay=true, max
 // ============ 【预设模式】 ============
 grp_preset = "【预设模式】"
 preset = input.string("黄金 5m", "交易品种预设", options=["黄金 5m", "黄金 15m", "BTC 15m", "BTC 1h", "股票日线", "自定义"], group=grp_preset, tooltip="选择预设会自动套用优化参数")
+sigMode = input.string("平衡", "信号频率模式", options=["宽松", "平衡", "严格"], group=grp_preset, tooltip="宽松=信号多胜率中;平衡=推荐;严格=信号少胜率高")
 
 // ============ 输入参数 ============
 grp_struct  = "【市场结构】"
@@ -24,7 +25,7 @@ grp_pa      = "【价格行为过滤】"
 usePinBar   = input.bool(true, "启用 Pin Bar", group=grp_pa)
 useEngulf   = input.bool(true, "启用吞没形态", group=grp_pa)
 useVolume   = input.bool(true, "启用成交量确认", group=grp_pa)
-volMultIn   = input.float(2.0, "成交量放大倍数", step=0.1, group=grp_pa)
+volMultIn   = input.float(1.5, "成交量放大倍数", step=0.1, group=grp_pa)
 
 grp_trend   = "【趋势过滤】"
 useEma      = input.bool(true, "启用 EMA 趋势过滤", group=grp_trend)
@@ -32,7 +33,7 @@ emaFastIn   = input.int(20, "EMA 快线", group=grp_trend)
 emaSlowIn   = input.int(50, "EMA 慢线", group=grp_trend)
 
 grp_mtf     = "【多周期 MTF 过滤】"
-useMTF      = input.bool(true, "启用大周期趋势锁", group=grp_mtf, tooltip="只做与大周期一致的单")
+useMTF      = input.bool(false, "启用大周期趋势锁", group=grp_mtf, tooltip="只做与大周期一致的单(开启后信号会少很多)")
 mtfTF       = input.timeframe("60", "大周期", options=["15", "30", "60", "240", "D"], group=grp_mtf)
 
 grp_risk    = "【风险管理】"
@@ -55,7 +56,7 @@ atrSpikeMult = input.float(2.5, "ATR 暴涨阈值", step=0.1, group=grp_news, to
 // ============ 应用预设参数 ============
 // 预设可覆盖用户设置:swingLen, volMult, emaFast, emaSlow, slAtrMult, rr1/2/3
 swingLen   = preset == "黄金 5m" ? 5  : preset == "黄金 15m" ? 8  : preset == "BTC 15m" ? 8  : preset == "BTC 1h" ? 10 : preset == "股票日线" ? 10 : swingLenIn
-volMult    = preset == "黄金 5m" ? 2.0 : preset == "黄金 15m" ? 1.8 : preset == "BTC 15m" ? 1.5 : preset == "BTC 1h" ? 1.5 : preset == "股票日线" ? 1.3 : volMultIn
+volMult    = preset == "黄金 5m" ? 1.5 : preset == "黄金 15m" ? 1.5 : preset == "BTC 15m" ? 1.5 : preset == "BTC 1h" ? 1.5 : preset == "股票日线" ? 1.3 : volMultIn
 emaFastLen = preset == "黄金 5m" ? 20 : preset == "黄金 15m" ? 21 : preset == "BTC 15m" ? 21 : preset == "BTC 1h" ? 21 : preset == "股票日线" ? 20 : emaFastIn
 emaSlowLen = preset == "黄金 5m" ? 50 : preset == "黄金 15m" ? 50 : preset == "BTC 15m" ? 50 : preset == "BTC 1h" ? 50 : preset == "股票日线" ? 50 : emaSlowIn
 slAtrMult  = preset == "黄金 5m" ? 2.0 : preset == "黄金 15m" ? 1.8 : preset == "BTC 15m" ? 1.5 : preset == "BTC 1h" ? 1.5 : preset == "股票日线" ? 1.5 : slAtrMultIn
@@ -224,8 +225,12 @@ paBear = (usePinBar and bearPin) or (useEngulf and bearEngulf)
 mtfOk_Buy  = not useMTF or mtfTrendUp
 mtfOk_Sell = not useMTF or mtfTrendDown
 
-buySignal  = (chochUp   or sweepLow)  and paBull and trendUp   and volOk and mtfOk_Buy  and sessionOk and not highVol
-sellSignal = (chochDown or sweepHigh) and paBear and trendDown and volOk and mtfOk_Sell and sessionOk and not highVol
+// 信号模式:宽松 = 只看 PA + 趋势;平衡 = + 结构 或 PA(二选一);严格 = 必须结构 + PA 都满足
+structBuy  = chochUp   or sweepLow   or bosUp
+structSell = chochDown or sweepHigh  or bosDown
+
+buySignal  = sigMode == "宽松" ? (paBull and trendUp   and volOk and sessionOk and not highVol and mtfOk_Buy)  : sigMode == "平衡" ? ((structBuy  or paBull) and trendUp   and volOk and sessionOk and not highVol and mtfOk_Buy)  : (structBuy  and paBull and trendUp   and volOk and sessionOk and not highVol and mtfOk_Buy)
+sellSignal = sigMode == "宽松" ? (paBear and trendDown and volOk and sessionOk and not highVol and mtfOk_Sell) : sigMode == "平衡" ? ((structSell or paBear) and trendDown and volOk and sessionOk and not highVol and mtfOk_Sell) : (structSell and paBear and trendDown and volOk and sessionOk and not highVol and mtfOk_Sell)
 
 // ============ 风险管理:SL / TP ============
 var float entryPrice = na
@@ -332,7 +337,7 @@ if barstate.islast
     table.cell(infoPanel, 1, 0, syminfo.ticker, bgcolor=color.navy, text_color=color.white, text_size=size.normal)
 
     table.cell(infoPanel, 0, 1, "预设", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    table.cell(infoPanel, 1, 1, preset, text_color=color.aqua, text_size=size.small)
+    table.cell(infoPanel, 1, 1, preset + " | " + sigMode, text_color=color.aqua, text_size=size.small)
 
     table.cell(infoPanel, 0, 2, "当前 TF", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
     table.cell(infoPanel, 1, 2, curTxt, bgcolor=color.new(curCol, 70), text_color=color.white, text_size=size.small)
