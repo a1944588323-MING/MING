@@ -1,0 +1,152 @@
+//@version=5
+// =============================================================
+//  SMC + Price Action Strategy (回测专用版)  |  by Kiro
+//  用于在 TradingView 的 Strategy Tester 中统计胜率、盈亏等真实数据
+// =============================================================
+strategy("SMC + PA Strategy (回测版)", shorttitle="SMC+PA Strat",
+     overlay=true,
+     initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10,
+     commission_type=strategy.commission.percent,
+     commission_value=0.05,
+     slippage=2,
+     pyramiding=0,
+     calc_on_every_tick=false,
+     process_orders_on_close=true,
+     max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ============ 预设 ============
+grp_preset = "【预设模式】"
+preset  = input.string("黄金 5m", "交易品种预设", options=["黄金 5m", "黄金 15m", "BTC 15m", "BTC 1h", "自定义"], group=grp_preset)
+sigMode = input.string("平衡", "信号频率模式", options=["宽松", "平衡", "严格"], group=grp_preset)
+
+// ============ 核心参数 ============
+grp_core = "【核心参数】"
+swingLen = input.int(5, "Swing 周期", minval=2, group=grp_core)
+volMult  = input.float(1.5, "成交量倍数", step=0.1, group=grp_core)
+emaFastLen = input.int(20, "EMA 快", group=grp_core)
+emaSlowLen = input.int(50, "EMA 慢", group=grp_core)
+
+grp_risk = "【风险管理】"
+atrLen    = input.int(14, "ATR 周期", group=grp_risk)
+slAtrMult = input.float(2.0, "止损 ATR 倍数", step=0.1, group=grp_risk)
+rr1       = input.float(1.0, "TP1 RR", step=0.1, group=grp_risk)
+rr2       = input.float(1.5, "TP2 RR", step=0.1, group=grp_risk)
+rr3       = input.float(2.5, "TP3 RR", step=0.1, group=grp_risk)
+usePartialExit = input.bool(true, "分批止盈(TP1 平 50%,TP2 平 30%,TP3 平 20%)", group=grp_risk)
+
+grp_filter = "【过滤器】"
+useSession    = input.bool(true, "启用时段过滤", group=grp_filter)
+sessionStr    = input.session("1400-2359", "活跃时段", group=grp_filter)
+useNewsFilter = input.bool(true, "启用高波动过滤", group=grp_filter)
+atrSpikeMult  = input.float(2.5, "ATR 暴涨阈值", step=0.1, group=grp_filter)
+useMTF        = input.bool(false, "启用大周期趋势锁", group=grp_filter)
+mtfTF         = input.timeframe("60", "大周期", group=grp_filter)
+
+// ============ 基础指标 ============
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+atrVal  = ta.atr(atrLen)
+atrAvg  = ta.sma(atrVal, 50)
+volAvg  = ta.sma(volume, 20)
+
+trendUp   = emaFast > emaSlow and close > emaFast
+trendDown = emaFast < emaSlow and close < emaFast
+
+plot(emaFast, "EMA Fast", color=color.orange)
+plot(emaSlow, "EMA Slow", color=color.blue, linewidth=2)
+
+// ============ MTF ============
+mtfEmaFast = request.security(syminfo.tickerid, mtfTF, ta.ema(close, emaFastLen), lookahead=barmerge.lookahead_off)
+mtfEmaSlow = request.security(syminfo.tickerid, mtfTF, ta.ema(close, emaSlowLen), lookahead=barmerge.lookahead_off)
+mtfClose   = request.security(syminfo.tickerid, mtfTF, close, lookahead=barmerge.lookahead_off)
+mtfUp   = mtfEmaFast > mtfEmaSlow and mtfClose > mtfEmaFast
+mtfDn   = mtfEmaFast < mtfEmaSlow and mtfClose < mtfEmaFast
+mtfOkB  = not useMTF or mtfUp
+mtfOkS  = not useMTF or mtfDn
+
+// ============ 时段 & 高波动 ============
+inSession = not useSession or not na(time(timeframe.period, sessionStr))
+highVol   = useNewsFilter and atrVal > atrAvg * atrSpikeMult
+filtOk    = inSession and not highVol
+
+// ============ 结构 ============
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+var float lastPH = na
+var float lastPL = na
+var int trendDir = 0
+if not na(ph)
+    lastPH := ph
+if not na(pl)
+    lastPL := pl
+
+bosUp     = not na(lastPH) and close > lastPH and close[1] <= lastPH and trendDir == 1
+bosDown   = not na(lastPL) and close < lastPL and close[1] >= lastPL and trendDir == -1
+chochUp   = not na(lastPH) and close > lastPH and close[1] <= lastPH and trendDir != 1
+chochDown = not na(lastPL) and close < lastPL and close[1] >= lastPL and trendDir != -1
+
+if chochUp or bosUp
+    trendDir := 1
+if chochDown or bosDown
+    trendDir := -1
+
+sweepHigh = not na(lastPH) and high > lastPH and close < lastPH
+sweepLow  = not na(lastPL) and low  < lastPL and close > lastPL
+
+// ============ 价格行为 ============
+bodySize  = math.abs(close - open)
+upperWick = high - math.max(close, open)
+lowerWick = math.min(close, open) - low
+bullPin   = lowerWick > bodySize * 2 and upperWick < bodySize
+bearPin   = upperWick > bodySize * 2 and lowerWick < bodySize
+bullEng   = close > open and close[1] < open[1] and close > open[1] and open < close[1]
+bearEng   = close < open and close[1] > open[1] and close < open[1] and open > close[1]
+
+volOk  = volume > volAvg * volMult
+paBull = bullPin or bullEng
+paBear = bearPin or bearEng
+
+structBuy  = chochUp   or sweepLow   or bosUp
+structSell = chochDown or sweepHigh  or bosDown
+
+buySignal  = sigMode == "宽松" ? (paBull and trendUp   and volOk and filtOk and mtfOkB) : sigMode == "平衡" ? ((structBuy  or paBull) and trendUp   and volOk and filtOk and mtfOkB) : (structBuy  and paBull and trendUp   and volOk and filtOk and mtfOkB)
+sellSignal = sigMode == "宽松" ? (paBear and trendDown and volOk and filtOk and mtfOkS) : sigMode == "平衡" ? ((structSell or paBear) and trendDown and volOk and filtOk and mtfOkS) : (structSell and paBear and trendDown and volOk and filtOk and mtfOkS)
+
+// ============ 策略执行 ============
+longSL  = math.min(low, low[1], low[2]) - atrVal * slAtrMult
+shortSL = math.max(high, high[1], high[2]) + atrVal * slAtrMult
+
+if buySignal and strategy.position_size == 0
+    riskL = close - longSL
+    tp1 = close + riskL * rr1
+    tp2 = close + riskL * rr2
+    tp3 = close + riskL * rr3
+    strategy.entry("Long", strategy.long)
+    if usePartialExit
+        strategy.exit("TP1", "Long", qty_percent=50, limit=tp1, stop=longSL)
+        strategy.exit("TP2", "Long", qty_percent=30, limit=tp2, stop=longSL)
+        strategy.exit("TP3", "Long", limit=tp3, stop=longSL)
+    else
+        strategy.exit("TP",  "Long", limit=tp2, stop=longSL)
+
+if sellSignal and strategy.position_size == 0
+    riskS = shortSL - close
+    tp1 = close - riskS * rr1
+    tp2 = close - riskS * rr2
+    tp3 = close - riskS * rr3
+    strategy.entry("Short", strategy.short)
+    if usePartialExit
+        strategy.exit("TP1", "Short", qty_percent=50, limit=tp1, stop=shortSL)
+        strategy.exit("TP2", "Short", qty_percent=30, limit=tp2, stop=shortSL)
+        strategy.exit("TP3", "Short", limit=tp3, stop=shortSL)
+    else
+        strategy.exit("TP",  "Short", limit=tp2, stop=shortSL)
+
+// ============ 可视化 ============
+plotshape(buySignal,  title="BUY",  style=shape.labelup,   location=location.belowbar, color=color.green, textcolor=color.white, text="BUY", size=size.small)
+plotshape(sellSignal, title="SELL", style=shape.labeldown, location=location.abovebar, color=color.red,   textcolor=color.white, text="SELL", size=size.small)
+
+bgcolor(useSession and not inSession ? color.new(color.gray, 92) : na)
+bgcolor(highVol ? color.new(color.red, 88) : na)
