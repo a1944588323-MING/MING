@@ -2,66 +2,60 @@
 // =============================================================
 //  SMC + Price Action Pro  |  by Kiro
 //  结合 SMC(聪明钱) + 价格行为 的综合交易指标
-//  功能:BOS / CHoCH / Order Block / FVG / Liquidity Sweep
-//       + Pin Bar / Engulfing + EMA 趋势过滤 + 成交量确认
-//       + 自动买卖点、入场区域、止损、三档止盈
 // =============================================================
 indicator("SMC + Price Action Pro", shorttitle="SMC+PA Pro", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
 
 // ============ 输入参数 ============
-grp_struct   = "【市场结构】"
-swingLen     = input.int(10,  "Swing 周期",             minval=2,  group=grp_struct, tooltip="判断摆动高低点的周期,短线用 5,波段用 10-20")
-showBOS      = input.bool(true, "显示 BOS / CHoCH",      group=grp_struct)
+grp_struct  = "【市场结构】"
+swingLen    = input.int(10, "Swing 周期", minval=2, group=grp_struct, tooltip="短线 5,波段 10-20")
+showBOS     = input.bool(true, "显示 BOS / CHoCH", group=grp_struct)
 
-grp_ob       = "【订单块 & FVG】"
-showOB       = input.bool(true, "显示订单块 (OB)",       group=grp_ob)
-showFVG      = input.bool(true, "显示失衡区 (FVG)",      group=grp_ob)
-maxOB        = input.int(5,   "最多显示 OB 数量",        minval=1, maxval=20, group=grp_ob)
-maxFVG       = input.int(5,   "最多显示 FVG 数量",       minval=1, maxval=20, group=grp_ob)
+grp_ob      = "【订单块 & FVG】"
+showOB      = input.bool(true, "显示订单块 (OB)", group=grp_ob)
+showFVG     = input.bool(true, "显示失衡区 (FVG)", group=grp_ob)
+maxOB       = input.int(5, "最多显示 OB 数量", minval=1, maxval=20, group=grp_ob)
+maxFVG      = input.int(5, "最多显示 FVG 数量", minval=1, maxval=20, group=grp_ob)
 
-grp_pa       = "【价格行为过滤】"
-usePinBar    = input.bool(true, "启用 Pin Bar 确认",     group=grp_pa)
-useEngulf    = input.bool(true, "启用吞没形态确认",       group=grp_pa)
-useVolume    = input.bool(true, "启用成交量放大确认",     group=grp_pa)
-volMult      = input.float(1.5, "成交量放大倍数",         step=0.1, group=grp_pa)
+grp_pa      = "【价格行为过滤】"
+usePinBar   = input.bool(true, "启用 Pin Bar", group=grp_pa)
+useEngulf   = input.bool(true, "启用吞没形态", group=grp_pa)
+useVolume   = input.bool(true, "启用成交量确认", group=grp_pa)
+volMult     = input.float(1.5, "成交量放大倍数", step=0.1, group=grp_pa)
 
-grp_trend    = "【趋势过滤】"
-useEma       = input.bool(true, "启用 EMA 趋势过滤",     group=grp_trend)
-emaFastLen   = input.int(21,  "EMA 快线",                group=grp_trend)
-emaSlowLen   = input.int(50,  "EMA 慢线",                group=grp_trend)
+grp_trend   = "【趋势过滤】"
+useEma      = input.bool(true, "启用 EMA 趋势过滤", group=grp_trend)
+emaFastLen  = input.int(21, "EMA 快线", group=grp_trend)
+emaSlowLen  = input.int(50, "EMA 慢线", group=grp_trend)
 
-grp_risk     = "【风险管理】"
-atrLen       = input.int(14,  "ATR 周期",                group=grp_risk)
-slAtrMult    = input.float(1.5, "止损 ATR 倍数",         step=0.1, group=grp_risk)
-rr1          = input.float(1.0, "TP1 风险回报比",         step=0.1, group=grp_risk)
-rr2          = input.float(2.0, "TP2 风险回报比",         step=0.1, group=grp_risk)
-rr3          = input.float(3.0, "TP3 风险回报比",         step=0.1, group=grp_risk)
-showZone     = input.bool(true, "显示推荐入场区域",       group=grp_risk)
-
-grp_alert    = "【提示】"
-alertOn      = input.bool(true, "启用警报",              group=grp_alert)
+grp_risk    = "【风险管理】"
+atrLen      = input.int(14, "ATR 周期", group=grp_risk)
+slAtrMult   = input.float(1.5, "止损 ATR 倍数", step=0.1, group=grp_risk)
+rr1         = input.float(1.0, "TP1 风险回报比", step=0.1, group=grp_risk)
+rr2         = input.float(2.0, "TP2 风险回报比", step=0.1, group=grp_risk)
+rr3         = input.float(3.0, "TP3 风险回报比", step=0.1, group=grp_risk)
+showZone    = input.bool(true, "显示入场区域", group=grp_risk)
 
 // ============ 基础指标 ============
 emaFast = ta.ema(close, emaFastLen)
 emaSlow = ta.ema(close, emaSlowLen)
-atr     = ta.atr(atrLen)
+atrVal  = ta.atr(atrLen)
 volAvg  = ta.sma(volume, 20)
 
 trendUp   = not useEma or (emaFast > emaSlow and close > emaFast)
 trendDown = not useEma or (emaFast < emaSlow and close < emaFast)
 
 plot(useEma ? emaFast : na, "EMA Fast", color=color.new(color.orange, 0), linewidth=1)
-plot(useEma ? emaSlow : na, "EMA Slow", color=color.new(color.blue,   0), linewidth=2)
+plot(useEma ? emaSlow : na, "EMA Slow", color=color.new(color.blue, 0), linewidth=2)
 
 // ============ 市场结构:摆动高低点 ============
 ph = ta.pivothigh(high, swingLen, swingLen)
-pl = ta.pivotlow(low,   swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
 
-var float lastPH      = na
-var float lastPL      = na
-var int   lastPHBar   = na
-var int   lastPLBar   = na
-var int   trendDir    = 0     // 1 = 看涨结构, -1 = 看跌结构
+var float lastPH    = na
+var float lastPL    = na
+var int   lastPHBar = na
+var int   lastPLBar = na
+var int   trendDir  = 0
 
 if not na(ph)
     lastPH := ph
@@ -70,68 +64,63 @@ if not na(pl)
     lastPL := pl
     lastPLBar := bar_index - swingLen
 
-// BOS / CHoCH 判定
-bosUp    = false
-bosDown  = false
-chochUp  = false
-chochDown= false
+// BOS / CHoCH
+bosUp     = not na(lastPH) and close > lastPH and close[1] <= lastPH and trendDir == 1
+bosDown   = not na(lastPL) and close < lastPL and close[1] >= lastPL and trendDir == -1
+chochUp   = not na(lastPH) and close > lastPH and close[1] <= lastPH and trendDir != 1
+chochDown = not na(lastPL) and close < lastPL and close[1] >= lastPL and trendDir != -1
 
-if not na(lastPH) and close > lastPH and close[1] <= lastPH
-    if trendDir == 1
-        bosUp := true
-    else
-        chochUp := true
+if chochUp or bosUp
     trendDir := 1
-
-if not na(lastPL) and close < lastPL and close[1] >= lastPL
-    if trendDir == -1
-        bosDown := true
-    else
-        chochDown := true
+if chochDown or bosDown
     trendDir := -1
 
-// 画 BOS / CHoCH 线
+// 画 BOS / CHoCH
 if showBOS and bosUp
-    line.new(lastPHBar, lastPH, bar_index, lastPH, color=color.new(color.green, 0), width=1, style=line.style_dashed)
+    line.new(lastPHBar, lastPH, bar_index, lastPH, color=color.green, width=1, style=line.style_dashed)
     label.new(bar_index, lastPH, "BOS", color=color.new(color.green, 70), style=label.style_label_down, textcolor=color.white, size=size.tiny)
 if showBOS and bosDown
-    line.new(lastPLBar, lastPL, bar_index, lastPL, color=color.new(color.red, 0), width=1, style=line.style_dashed)
+    line.new(lastPLBar, lastPL, bar_index, lastPL, color=color.red, width=1, style=line.style_dashed)
     label.new(bar_index, lastPL, "BOS", color=color.new(color.red, 70), style=label.style_label_up, textcolor=color.white, size=size.tiny)
 if showBOS and chochUp
-    line.new(lastPHBar, lastPH, bar_index, lastPH, color=color.new(color.lime, 0), width=2)
+    line.new(lastPHBar, lastPH, bar_index, lastPH, color=color.lime, width=2)
     label.new(bar_index, lastPH, "CHoCH", color=color.new(color.lime, 40), style=label.style_label_down, textcolor=color.black, size=size.small)
 if showBOS and chochDown
-    line.new(lastPLBar, lastPL, bar_index, lastPL, color=color.new(color.fuchsia, 0), width=2)
+    line.new(lastPLBar, lastPL, bar_index, lastPL, color=color.fuchsia, width=2)
     label.new(bar_index, lastPL, "CHoCH", color=color.new(color.fuchsia, 40), style=label.style_label_up, textcolor=color.white, size=size.small)
 
 // ============ 订单块 (Order Block) ============
-// 看涨 OB:最后一根下跌 K 后价格强势上破结构
-// 看跌 OB:最后一根上涨 K 后价格强势下破结构
 var box[] bullOBs = array.new<box>()
 var box[] bearOBs = array.new<box>()
 
-if showOB and bosUp and close[1] > open[1]
-    // 向前找最近一根阴线
+findBullOB() =>
+    int idx = -1
     for i = 1 to 10
         if close[i] < open[i]
-            bullOB = box.new(bar_index - i, high[i], bar_index + 10, low[i],
-                 border_color=color.new(color.green, 50),
-                 bgcolor=color.new(color.green, 85),
-                 text="Bull OB", text_color=color.green, text_size=size.tiny)
-            array.push(bullOBs, bullOB)
+            idx := i
             break
+    idx
 
-if showOB and bosDown and close[1] < open[1]
+findBearOB() =>
+    int idx = -1
     for i = 1 to 10
         if close[i] > open[i]
-            bearOB = box.new(bar_index - i, high[i], bar_index + 10, low[i],
-                 border_color=color.new(color.red, 50),
-                 bgcolor=color.new(color.red, 85),
-                 text="Bear OB", text_color=color.red, text_size=size.tiny)
-            array.push(bearOBs, bearOB)
+            idx := i
             break
+    idx
 
-// 限制 OB 数量
+if showOB and bosUp
+    i = findBullOB()
+    if i > 0
+        b = box.new(bar_index - i, high[i], bar_index + 10, low[i], border_color=color.new(color.green, 50), bgcolor=color.new(color.green, 85), text="Bull OB", text_color=color.green, text_size=size.tiny)
+        array.push(bullOBs, b)
+
+if showOB and bosDown
+    i = findBearOB()
+    if i > 0
+        b = box.new(bar_index - i, high[i], bar_index + 10, low[i], border_color=color.new(color.red, 50), bgcolor=color.new(color.red, 85), text="Bear OB", text_color=color.red, text_size=size.tiny)
+        array.push(bearOBs, b)
+
 while array.size(bullOBs) > maxOB
     box.delete(array.shift(bullOBs))
 while array.size(bearOBs) > maxOB
@@ -145,54 +134,39 @@ bullFVG = low > high[2]
 bearFVG = high < low[2]
 
 if showFVG and bullFVG
-    fvg = box.new(bar_index - 2, low, bar_index + 20, high[2],
-        border_color=color.new(color.teal, 60),
-        bgcolor=color.new(color.teal, 80),
-        text="FVG", text_color=color.teal, text_size=size.tiny)
-    array.push(bullFVGs, fvg)
+    f = box.new(bar_index - 2, low, bar_index + 20, high[2], border_color=color.new(color.teal, 60), bgcolor=color.new(color.teal, 80), text="FVG", text_color=color.teal, text_size=size.tiny)
+    array.push(bullFVGs, f)
 
 if showFVG and bearFVG
-    fvg = box.new(bar_index - 2, low[2], bar_index + 20, high,
-        border_color=color.new(color.maroon, 60),
-        bgcolor=color.new(color.maroon, 80),
-        text="FVG", text_color=color.maroon, text_size=size.tiny)
-    array.push(bearFVGs, fvg)
+    f = box.new(bar_index - 2, low[2], bar_index + 20, high, border_color=color.new(color.maroon, 60), bgcolor=color.new(color.maroon, 80), text="FVG", text_color=color.maroon, text_size=size.tiny)
+    array.push(bearFVGs, f)
 
 while array.size(bullFVGs) > maxFVG
     box.delete(array.shift(bullFVGs))
 while array.size(bearFVGs) > maxFVG
     box.delete(array.shift(bearFVGs))
 
-// ============ 流动性扫荡 (Liquidity Sweep) ============
-// 价格刺破前高/前低但收盘回来 => 假突破 / 扫止损
+// ============ 流动性扫荡 ============
 sweepHigh = not na(lastPH) and high > lastPH and close < lastPH
 sweepLow  = not na(lastPL) and low  < lastPL and close > lastPL
 
 // ============ 价格行为形态 ============
-bodySize   = math.abs(close - open)
-candleRange= high - low
-upperWick  = high - math.max(close, open)
-lowerWick  = math.min(close, open) - low
+bodySize    = math.abs(close - open)
+candleRange = high - low
+upperWick   = high - math.max(close, open)
+lowerWick   = math.min(close, open) - low
 
-// Pin Bar(锤子/射击之星)
-bullPin = lowerWick > bodySize * 2 and upperWick < bodySize and candleRange > 0
-bearPin = upperWick > bodySize * 2 and lowerWick < bodySize and candleRange > 0
-
-// 吞没形态
+bullPin    = lowerWick > bodySize * 2 and upperWick < bodySize and candleRange > 0
+bearPin    = upperWick > bodySize * 2 and lowerWick < bodySize and candleRange > 0
 bullEngulf = close > open and close[1] < open[1] and close > open[1] and open < close[1]
 bearEngulf = close < open and close[1] > open[1] and close < open[1] and open > close[1]
 
-// 成交量确认
-volOk = not useVolume or volume > volAvg * volMult
-
-// 价格行为综合信号
+volOk  = not useVolume or volume > volAvg * volMult
 paBull = (usePinBar and bullPin) or (useEngulf and bullEngulf)
 paBear = (usePinBar and bearPin) or (useEngulf and bearEngulf)
 
 // ============ 综合买卖信号 ============
-// 买入:CHoCH 向上 或 扫底 + PA 多头 + 多头趋势 + 成交量
-// 卖出:CHoCH 向下 或 扫顶 + PA 空头 + 空头趋势 + 成交量
-buySignal  = (chochUp or sweepLow)  and paBull and trendUp   and volOk
+buySignal  = (chochUp or sweepLow) and paBull and trendUp and volOk
 sellSignal = (chochDown or sweepHigh) and paBear and trendDown and volOk
 
 // ============ 风险管理:SL / TP ============
@@ -201,12 +175,12 @@ var float slPrice    = na
 var float tp1Price   = na
 var float tp2Price   = na
 var float tp3Price   = na
-var int   posDir     = 0   // 1 = 多, -1 = 空
+var int   posDir     = 0
 
 if buySignal
     entryPrice := close
-    slPrice    := math.min(low, low[1], low[2]) - atr * slAtrMult
-    risk       = entryPrice - slPrice
+    slPrice    := math.min(low, low[1], low[2]) - atrVal * slAtrMult
+    risk        = entryPrice - slPrice
     tp1Price   := entryPrice + risk * rr1
     tp2Price   := entryPrice + risk * rr2
     tp3Price   := entryPrice + risk * rr3
@@ -214,8 +188,8 @@ if buySignal
 
 if sellSignal
     entryPrice := close
-    slPrice    := math.max(high, high[1], high[2]) + atr * slAtrMult
-    risk       = slPrice - entryPrice
+    slPrice    := math.max(high, high[1], high[2]) + atrVal * slAtrMult
+    risk        = slPrice - entryPrice
     tp1Price   := entryPrice - risk * rr1
     tp2Price   := entryPrice - risk * rr2
     tp3Price   := entryPrice - risk * rr3
@@ -224,26 +198,23 @@ if sellSignal
 // ============ 绘制买卖信号 ============
 plotshape(buySignal,  title="BUY",  style=shape.labelup,   location=location.belowbar, color=color.new(color.green, 0), textcolor=color.white, text="BUY",  size=size.normal)
 plotshape(sellSignal, title="SELL", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0),   textcolor=color.white, text="SELL", size=size.normal)
-
-// 次要确认信号(小箭头:只有 PA 但没有结构)
-plotshape(paBull and trendUp and not buySignal,   title="多头 PA",  style=shape.triangleup,   location=location.belowbar, color=color.new(color.green, 50), size=size.tiny)
-plotshape(paBear and trendDown and not sellSignal,title="空头 PA",  style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 50),   size=size.tiny)
+plotshape(paBull and trendUp and not buySignal,    title="PA Bull", style=shape.triangleup,   location=location.belowbar, color=color.new(color.green, 50), size=size.tiny)
+plotshape(paBear and trendDown and not sellSignal, title="PA Bear", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 50),   size=size.tiny)
 
 // ============ 绘制 SL / TP 水平线 + 入场区域 ============
-var line slLine  = na
-var line tp1Line = na
-var line tp2Line = na
-var line tp3Line = na
-var line entLine = na
-var box  entZone = na
-var label slLbl  = na
-var label tp1Lbl = na
-var label tp2Lbl = na
-var label tp3Lbl = na
-var label entLbl = na
+var line  slLine  = na
+var line  tp1Line = na
+var line  tp2Line = na
+var line  tp3Line = na
+var line  entLine = na
+var box   entZone = na
+var label slLbl   = na
+var label tp1Lbl  = na
+var label tp2Lbl  = na
+var label tp3Lbl  = na
+var label entLbl  = na
 
-drawLevels(float ep, float sl, float tp1, float tp2, float tp3, int dir) =>
-    // 清理旧图形
+if buySignal or sellSignal
     line.delete(slLine)
     line.delete(tp1Line)
     line.delete(tp2Line)
@@ -256,66 +227,55 @@ drawLevels(float ep, float sl, float tp1, float tp2, float tp3, int dir) =>
     label.delete(tp3Lbl)
     label.delete(entLbl)
 
-    zoneColor = dir == 1 ? color.new(color.green, 80) : color.new(color.red, 80)
-    zoneTop   = dir == 1 ? ep : ep + atr * 0.3
-    zoneBot   = dir == 1 ? ep - atr * 0.3 : ep
+    zoneCol = posDir == 1 ? color.new(color.green, 80) : color.new(color.red, 80)
+    zoneBdr = posDir == 1 ? color.new(color.green, 30) : color.new(color.red, 30)
+    zoneTop = posDir == 1 ? entryPrice : entryPrice + atrVal * 0.3
+    zoneBot = posDir == 1 ? entryPrice - atrVal * 0.3 : entryPrice
 
     if showZone
-        entZone := box.new(bar_index, zoneTop, bar_index + 30, zoneBot,
-                 border_color=color.new(dir == 1 ? color.green : color.red, 30),
-                 bgcolor=zoneColor, text="入场区", text_color=color.white, text_size=size.small)
+        entZone := box.new(bar_index, zoneTop, bar_index + 30, zoneBot, border_color=zoneBdr, bgcolor=zoneCol, text="入场区", text_color=color.white, text_size=size.small)
 
-    entLine := line.new(bar_index, ep,  bar_index + 30, ep,  color=color.new(color.yellow, 0), width=2, style=line.style_solid)
-    slLine  := line.new(bar_index, sl,  bar_index + 30, sl,  color=color.new(color.red, 0),    width=2, style=line.style_dashed)
-    tp1Line := line.new(bar_index, tp1, bar_index + 30, tp1, color=color.new(color.green, 0),  width=1, style=line.style_dashed)
-    tp2Line := line.new(bar_index, tp2, bar_index + 30, tp2, color=color.new(color.green, 0),  width=1, style=line.style_dashed)
-    tp3Line := line.new(bar_index, tp3, bar_index + 30, tp3, color=color.new(color.green, 0),  width=2, style=line.style_dashed)
+    entLine := line.new(bar_index, entryPrice, bar_index + 30, entryPrice, color=color.yellow, width=2)
+    slLine  := line.new(bar_index, slPrice,    bar_index + 30, slPrice,    color=color.red,    width=2, style=line.style_dashed)
+    tp1Line := line.new(bar_index, tp1Price,   bar_index + 30, tp1Price,   color=color.green,  width=1, style=line.style_dashed)
+    tp2Line := line.new(bar_index, tp2Price,   bar_index + 30, tp2Price,   color=color.green,  width=1, style=line.style_dashed)
+    tp3Line := line.new(bar_index, tp3Price,   bar_index + 30, tp3Price,   color=color.green,  width=2, style=line.style_dashed)
 
-    entLbl := label.new(bar_index + 30, ep,  "Entry: " + str.tostring(ep,  format.mintick), color=color.new(color.yellow, 0), textcolor=color.black, style=label.style_label_left, size=size.small)
-    slLbl  := label.new(bar_index + 30, sl,  "SL: "    + str.tostring(sl,  format.mintick), color=color.new(color.red, 0),    textcolor=color.white, style=label.style_label_left, size=size.small)
-    tp1Lbl := label.new(bar_index + 30, tp1, "TP1 ("   + str.tostring(rr1, "#.#") + "R): " + str.tostring(tp1, format.mintick), color=color.new(color.green, 20), textcolor=color.white, style=label.style_label_left, size=size.small)
-    tp2Lbl := label.new(bar_index + 30, tp2, "TP2 ("   + str.tostring(rr2, "#.#") + "R): " + str.tostring(tp2, format.mintick), color=color.new(color.green, 10), textcolor=color.white, style=label.style_label_left, size=size.small)
-    tp3Lbl := label.new(bar_index + 30, tp3, "TP3 ("   + str.tostring(rr3, "#.#") + "R): " + str.tostring(tp3, format.mintick), color=color.new(color.green, 0),  textcolor=color.white, style=label.style_label_left, size=size.small)
-
-if buySignal or sellSignal
-    drawLevels(entryPrice, slPrice, tp1Price, tp2Price, tp3Price, posDir)
+    entLbl := label.new(bar_index + 30, entryPrice, "Entry: " + str.tostring(entryPrice, format.mintick), color=color.yellow, textcolor=color.black, style=label.style_label_left, size=size.small)
+    slLbl  := label.new(bar_index + 30, slPrice,    "SL: "    + str.tostring(slPrice,    format.mintick), color=color.red,    textcolor=color.white, style=label.style_label_left, size=size.small)
+    tp1Lbl := label.new(bar_index + 30, tp1Price,   "TP1: "   + str.tostring(tp1Price,   format.mintick), color=color.new(color.green, 20), textcolor=color.white, style=label.style_label_left, size=size.small)
+    tp2Lbl := label.new(bar_index + 30, tp2Price,   "TP2: "   + str.tostring(tp2Price,   format.mintick), color=color.new(color.green, 10), textcolor=color.white, style=label.style_label_left, size=size.small)
+    tp3Lbl := label.new(bar_index + 30, tp3Price,   "TP3: "   + str.tostring(tp3Price,   format.mintick), color=color.green,  textcolor=color.white, style=label.style_label_left, size=size.small)
 
 // ============ 信息面板 ============
 var table infoPanel = table.new(position.top_right, 2, 7, border_width=1)
 
 if barstate.islast
-    trendTxt = trendUp ? "多头 ▲" : trendDown ? "空头 ▼" : "震荡 ─"
+    trendTxt = trendUp ? "多头" : trendDown ? "空头" : "震荡"
     trendCol = trendUp ? color.green : trendDown ? color.red : color.gray
-    lastSig  = posDir == 1 ? "LONG" : posDir == -1 ? "SHORT" : "—"
+    lastSig  = posDir == 1 ? "LONG" : posDir == -1 ? "SHORT" : "-"
     sigCol   = posDir == 1 ? color.green : posDir == -1 ? color.red : color.gray
 
-    table.cell(infoPanel, 0, 0, "SMC + PA Pro",    bgcolor=color.new(color.navy, 0),  text_color=color.white, text_size=size.normal)
-    table.cell(infoPanel, 1, 0, syminfo.ticker,    bgcolor=color.new(color.navy, 0),  text_color=color.white, text_size=size.normal)
-
-    table.cell(infoPanel, 0, 1, "趋势",            bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    table.cell(infoPanel, 1, 1, trendTxt,          bgcolor=color.new(trendCol, 70),   text_color=color.white, text_size=size.small)
-
-    table.cell(infoPanel, 0, 2, "最近信号",         bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    table.cell(infoPanel, 1, 2, lastSig,           bgcolor=color.new(sigCol, 70),     text_color=color.white, text_size=size.small)
-
-    table.cell(infoPanel, 0, 3, "入场",            bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    table.cell(infoPanel, 1, 3, na(entryPrice) ? "—" : str.tostring(entryPrice, format.mintick), text_color=color.yellow, text_size=size.small)
-
-    table.cell(infoPanel, 0, 4, "止损",            bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    table.cell(infoPanel, 1, 4, na(slPrice) ? "—" : str.tostring(slPrice, format.mintick), text_color=color.red, text_size=size.small)
-
-    table.cell(infoPanel, 0, 5, "TP1 / TP2 / TP3", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    tpTxt = na(tp1Price) ? "—" : str.tostring(tp1Price, format.mintick) + " / " + str.tostring(tp2Price, format.mintick) + " / " + str.tostring(tp3Price, format.mintick)
+    table.cell(infoPanel, 0, 0, "SMC + PA Pro", bgcolor=color.navy, text_color=color.white, text_size=size.normal)
+    table.cell(infoPanel, 1, 0, syminfo.ticker, bgcolor=color.navy, text_color=color.white, text_size=size.normal)
+    table.cell(infoPanel, 0, 1, "趋势", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 1, 1, trendTxt, bgcolor=color.new(trendCol, 70), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 0, 2, "信号", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 1, 2, lastSig, bgcolor=color.new(sigCol, 70), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 0, 3, "入场", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 1, 3, na(entryPrice) ? "-" : str.tostring(entryPrice, format.mintick), text_color=color.yellow, text_size=size.small)
+    table.cell(infoPanel, 0, 4, "止损", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 1, 4, na(slPrice) ? "-" : str.tostring(slPrice, format.mintick), text_color=color.red, text_size=size.small)
+    table.cell(infoPanel, 0, 5, "TP1/2/3", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    tpTxt = na(tp1Price) ? "-" : str.tostring(tp1Price, format.mintick) + " / " + str.tostring(tp2Price, format.mintick) + " / " + str.tostring(tp3Price, format.mintick)
     table.cell(infoPanel, 1, 5, tpTxt, text_color=color.green, text_size=size.small)
-
-    table.cell(infoPanel, 0, 6, "ATR",             bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
-    table.cell(infoPanel, 1, 6, str.tostring(atr, format.mintick), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 0, 6, "ATR", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(infoPanel, 1, 6, str.tostring(atrVal, format.mintick), text_color=color.white, text_size=size.small)
 
 // ============ 警报 ============
-if alertOn
-    alertcondition(buySignal,  title="SMC+PA 买入信号",  message="{{ticker}} 买入信号 @ {{close}}")
-    alertcondition(sellSignal, title="SMC+PA 卖出信号",  message="{{ticker}} 卖出信号 @ {{close}}")
-    alertcondition(bosUp,      title="BOS 向上突破",     message="{{ticker}} BOS Up")
-    alertcondition(bosDown,    title="BOS 向下突破",     message="{{ticker}} BOS Down")
-    alertcondition(chochUp,    title="CHoCH 看涨反转",    message="{{ticker}} CHoCH Up")
-    alertcondition(chochDown,  title="CHoCH 看跌反转",    message="{{ticker}} CHoCH Down")
+alertcondition(buySignal,  title="买入信号", message="SMC+PA 买入信号")
+alertcondition(sellSignal, title="卖出信号", message="SMC+PA 卖出信号")
+alertcondition(bosUp,      title="BOS 向上", message="BOS Up")
+alertcondition(bosDown,    title="BOS 向下", message="BOS Down")
+alertcondition(chochUp,    title="CHoCH 看涨", message="CHoCH Up")
+alertcondition(chochDown,  title="CHoCH 看跌", message="CHoCH Down")
