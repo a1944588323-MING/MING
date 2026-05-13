@@ -351,24 +351,10 @@ def main():
             print("跳过")
         time.sleep(0.2)
 
-    # ========== A 股部分 ==========
-    # 从扫描结果中挑选评级 A+/A 的股票
-    a_share_csvs = ["theme_ai_results.csv", "theme_storage_results.csv", "theme_pharma_results.csv",
-                    "theme_liquor_results.csv", "theme_energy_results.csv", "theme_military_results.csv"]
+    # ========== A 股部分(截图里的 4 只低位机会) ==========
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    a_share_pool = set()
-    for csv_name in a_share_csvs:
-        path = os.path.join(base_dir, csv_name)
-        if not os.path.exists(path):
-            continue
-        df = pd.read_csv(path)
-        # 只取 A+ 评级的
-        sel = df[df["rating"] == "A+"]
-        for _, row in sel.iterrows():
-            a_share_pool.add(row["symbol"])
-
-    a_share_list = sorted(a_share_pool)
-    print(f"\n分析 A 股 A+ 评级 {len(a_share_list)} 只...")
+    a_share_list = ["603160.SS", "002230.SZ", "603690.SS", "603893.SS"]
+    print(f"\n分析 A 股截图 4 只...")
     a_results = []
     for i, s in enumerate(a_share_list, 1):
         print(f"  [{i}/{len(a_share_list)}] {s}", end=" ... ", flush=True)
@@ -381,7 +367,7 @@ def main():
         time.sleep(0.2)
 
     us_alloc = allocate_capital(us_results, 100000, label="美股 AI 能源 (8 只)")
-    a_alloc = allocate_capital(a_results, 100000, label="A 股 A+ 低位机会")
+    a_alloc = allocate_capital(a_results, 100000, label="A 股 4 只低位机会(截图)")
 
     # 保存到 CSV
     out_us = os.path.join(base_dir, "alloc_us.csv")
