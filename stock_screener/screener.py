@@ -81,16 +81,17 @@ def analyze(symbol):
         # 位置百分比: 0% = 在 52W 低, 100% = 在 52W 高
         position_pct = (last_close - lo52) / (hi52 - lo52) * 100 if hi52 > lo52 else 50
 
-        # 网格区间
+        # 网格区间(仅用于显示参考价位)
         danger_high_line = hi52 * (1 - ZONE_THRESHOLD_PCT / 100)
         danger_low_line  = lo52 * (1 + ZONE_THRESHOLD_PCT / 100)
         midline = (danger_high_line + danger_low_line) / 2
 
-        # 区域判定
-        in_high_danger = last_close >= danger_high_line
-        in_low_danger  = last_close <= danger_low_line
-        in_short_zone  = (last_close < danger_high_line) and (last_close > midline)
-        in_long_zone   = (last_close < midline) and (last_close > danger_low_line)
+        # 区域判定 - 用 position_pct 划分,避免 52W 区间窄时 high/low 阈值翻转
+        # < 20%: 低位危险区(抄底), 20-50%: 多网区, 50-80%: 空网区, > 80%: 高位危险区
+        in_high_danger = position_pct >= 80
+        in_low_danger  = position_pct <= 20
+        in_short_zone  = 50 < position_pct < 80
+        in_long_zone   = 20 < position_pct <= 50
 
         # RSI / BB
         rsi = float(calc_rsi(df["Close"], RSI_PERIOD).iloc[-1])
