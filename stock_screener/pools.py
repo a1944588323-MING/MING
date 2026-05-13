@@ -200,6 +200,96 @@ MILITARY = {
     },
 }
 
+# ==================== A 股 内存/存储 ====================
+STORAGE = {
+    "存储芯片设计": {
+        "688008.SS": "澜起科技",       # 内存接口芯片(全球前三 DDR5 RCD/MRCD)
+        "688123.SS": "聚辰股份",       # EEPROM 存储芯片(国内龙头)
+        "603893.SS": "瑞芯微",         # 存储 SoC
+        "300223.SZ": "北京君正",       # 车规存储 / DRAM / NOR Flash
+        "688385.SS": "复旦微电",       # 存储芯片 + FPGA
+        "300672.SZ": "国科微",         # 存储主控芯片(SSD)
+    },
+    "存储模组/制造": {
+        "002049.SZ": "紫光国微",       # FPGA / 存储
+        "300042.SZ": "朗科科技",       # U盘/SSD 模组
+        "300661.SZ": "圣邦股份",       # 存储相关模拟芯片
+        "603690.SS": "至纯科技",       # 存储设备配套
+        "002156.SZ": "通富微电",       # 存储封测
+    },
+    "存储材料/设备": {
+        "002409.SZ": "雅克科技",       # HBM 前驱体材料
+        "300814.SZ": "中富电路",       # PCB(存储相关)
+        "688200.SS": "华峰测控",       # 存储测试设备
+        "688521.SS": "芯原股份",       # 半导体 IP / 存储 IP
+        "300053.SZ": "欧比特",         # 嵌入式存储
+    },
+    "存储服务器/系统": {
+        "000977.SZ": "浪潮信息",       # 服务器/存储龙头
+        "603019.SS": "中科曙光",       # 高端存储/服务器
+        "601138.SS": "工业富联",       # 服务器(含存储)
+        "688041.SS": "海光信息",       # CPU/DCU(配套存储)
+        "002230.SZ": "科大讯飞",       # AI + 数据存储
+    },
+    "HBM/先进封装": {
+        "688981.SS": "中芯国际",       # 晶圆代工(HBM 工艺)
+        "002371.SZ": "北方华创",       # 存储设备
+        "688012.SS": "中微公司",       # 刻蚀设备
+        "603160.SS": "汇顶科技",       # 指纹/存储相关
+    },
+}
+
+# ==================== 美股 AI 能源(电力/核电/电网/数据中心电力) ====================
+US_AI_ENERGY = {
+    "核电运营商": {
+        "VST":   "Vistra (核电+数据中心)",
+        "CEG":   "Constellation (美最大核电)",
+        "NRG":   "NRG Energy",
+        "PEG":   "Public Service (核电)",
+        "DUK":   "Duke Energy",
+        "SO":    "Southern Company",
+    },
+    "小型模块化核电 SMR": {
+        "SMR":   "NuScale Power (SMR 龙头)",
+        "OKLO":  "Oklo (微型反应堆)",
+        "BWXT":  "BWX Technologies (核燃料/反应堆)",
+        "LEU":   "Centrus Energy (铀浓缩)",
+        "CCJ":   "Cameco (铀矿)",
+        "UEC":   "Uranium Energy (铀矿)",
+        "URA":   "Global X Uranium ETF",
+    },
+    "电力公用 (AI 受益)": {
+        "TLN":   "Talen Energy (核电+数据中心)",
+        "AEP":   "American Electric Power",
+        "EXC":   "Exelon (输配电)",
+        "D":     "Dominion Energy",
+        "ETR":   "Entergy",
+        "FE":    "FirstEnergy",
+    },
+    "数据中心电力解决方案": {
+        "ETN":   "Eaton (电源管理)",
+        "VRT":   "Vertiv (数据中心电源/冷却)",
+        "PWR":   "Quanta Services (电网建设)",
+        "MYRG":  "MYR Group (输电工程)",
+        "PRIM":  "Primoris Services",
+        "GEV":   "GE Vernova (燃气发电+电网)",
+    },
+    "电网/储能": {
+        "FLNC":  "Fluence Energy (储能)",
+        "STEM":  "Stem Inc (AI 储能)",
+        "ENPH":  "Enphase Energy",
+        "SEDG":  "SolarEdge",
+        "AES":   "AES Corp",
+        "NEE":   "NextEra Energy",
+    },
+    "天然气/燃气发电": {
+        "EQT":   "EQT Corp (天然气)",
+        "AR":    "Antero Resources",
+        "CTRA":  "Coterra Energy",
+        "EXE":   "Expand Energy",
+    },
+}
+
 # ==================== 光伏(独立扫描) ====================
 SOLAR = {
     "硅料/硅片": {
@@ -246,4 +336,6 @@ POOLS = {
     "pharma":     ("医药",                  PHARMA),
     "military":   ("军工",                  MILITARY),
     "solar":      ("光伏",                  SOLAR),
+    "storage":    ("A 股 内存/存储",        STORAGE),
+    "us_energy":  ("美股 AI 能源(核电/电力/电网)", US_AI_ENERGY),
 }

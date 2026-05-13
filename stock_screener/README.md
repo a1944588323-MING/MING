@@ -33,6 +33,8 @@ python theme_screener.py energy      # 新能源
 python theme_screener.py pharma      # 医药
 python theme_screener.py military    # 军工
 python theme_screener.py solar       # 光伏
+python theme_screener.py storage     # A 股 内存/存储
+python theme_screener.py us_energy   # 美股 AI 能源(核电/电力)
 python theme_screener.py all         # 全部主题串行
 ```
 
@@ -94,6 +96,8 @@ python daily_report.py --quiet        # 静默模式
 - **pharma** - 医药(15 只): 创新药、中药、医疗器械、疫苗
 - **military** - 军工(12 只): 航空、电子信息、船舶
 - **solar** - 光伏(12 只): 硅料、电池、逆变器、辅材
+- **storage** - A 股 内存/存储(25 只): 存储芯片、模组、HBM、存储服务器
+- **us_energy** - 美股 AI 能源(35 只): 核电运营、SMR、电力公用、数据中心电力、电网储能、燃气
 
 ## ⚠️ 免责声明
 

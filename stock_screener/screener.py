@@ -71,6 +71,11 @@ def analyze(symbol):
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
+        # 删除盘中未完成的 NaN 行(A 股 yfinance 经常返回今天的 NaN)
+        df = df.dropna(subset=["Close", "High", "Low"])
+        if len(df) < MIN_DATA_DAYS:
+            return None
+
         # 取最近 LOOKBACK_DAYS 天计算 52 周高低
         recent = df.tail(LOOKBACK_DAYS)
         hi52 = float(recent["High"].max())
