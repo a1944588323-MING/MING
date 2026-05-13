@@ -1,0 +1,172 @@
+//@version=6
+// ============================================================
+// RSI + BB 周线版 + 52W 过滤 + 合约网格推荐区间
+// 适用: ETH/USDT 周线 (1W) 合约网格辅助
+// 基于 52 周高低点自动划分多空网格区域
+// ============================================================
+indicator("RSI+BB Weekly + 52W Grid Zones", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// ========== 1. 指标参数 (周线已调优) ==========
+rsiLen   = input.int(14,   "RSI 长度",       group="① 指标参数")
+rsiOver  = input.int(70,   "RSI 超买线",     group="① 指标参数")
+rsiUnder = input.int(30,   "RSI 超卖线",     group="① 指标参数")
+
+bbLen    = input.int(13,   "布林带长度 (周)", group="① 指标参数",
+                           tooltip="周线建议 13 (~3个月) 或 20 (~5个月)")
+bbMult   = input.float(2.0,"布林带标准差",   group="① 指标参数")
+
+rsiLongMax  = input.float(50, "BUY 信号 RSI 上限", group="① 指标参数")
+rsiShortMin = input.float(50, "SELL 信号 RSI 下限", group="① 指标参数")
+
+// ========== 2. 52 周过滤参数 ==========
+use52W     = input.bool(true,  "启用 52 周极值过滤",  group="② 52周过滤")
+lookback   = input.int(52,     "回看周期 (周线根数)",  minval=10,
+                               tooltip="周线: 52周=52, 26周=26, 全年=52", group="② 52周过滤")
+zoneThresh = input.float(30.0, "极值区阈值 %",        minval=5, maxval=50, step=1,
+                               tooltip="周线网格推荐 25-35%", group="② 52周过滤")
+
+// ========== 3. 网格区间可视化参数 ==========
+showGridZones = input.bool(true, "显示网格推荐区间",      group="③ 网格区间")
+showMidline   = input.bool(true, "显示中位参考线",        group="③ 网格区间")
+showGridLines = input.bool(true, "显示网格分档线",        group="③ 网格区间")
+gridCount     = input.int(8,     "网格分档数",  minval=3, maxval=20, group="③ 网格区间",
+                               tooltip="周线建议 8-12 档")
+showPriceTable = input.bool(true, "显示网格价位表",        group="③ 网格区间")
+
+// ========== 4. 指标计算 ==========
+rsiVal = ta.rsi(close, rsiLen)
+basis  = ta.sma(close, bbLen)
+dev    = bbMult * ta.stdev(close, bbLen)
+upper  = basis + dev
+lower  = basis - dev
+atrVal = ta.atr(14)
+
+// ========== 5. 52 周高低点与区域划分 ==========
+hi52 = ta.highest(high, lookback)
+lo52 = ta.lowest(low,  lookback)
+
+dangerHighLine = hi52 * (1 - zoneThresh / 100)
+dangerLowLine  = lo52 * (1 + zoneThresh / 100)
+midline = (dangerHighLine + dangerLowLine) / 2
+
+nearHigh = close >= dangerHighLine
+nearLow  = close <= dangerLowLine
+
+// ========== 6. 信号判定 ==========
+rawLong  = ta.crossover(close[1], lower[1])  and rsiVal[1] < rsiLongMax  and close[1] > open[1]
+rawShort = ta.crossunder(close[1], upper[1]) and rsiVal[1] > rsiShortMin and close[1] < open[1]
+
+longSignal  = rawLong  and (not use52W or not nearHigh)
+shortSignal = rawShort and (not use52W or not nearLow)
+
+filteredLong  = rawLong  and use52W and nearHigh
+filteredShort = rawShort and use52W and nearLow
+
+// ========== 7. 信号标签 ==========
+if longSignal
+    label.new(bar_index[1], low[1], "BUY",
+              style=label.style_label_up, color=color.green,
+              textcolor=color.white, size=size.normal, yloc=yloc.belowbar)
+
+if shortSignal
+    label.new(bar_index[1], high[1], "SELL",
+              style=label.style_label_down, color=color.red,
+              textcolor=color.white, size=size.normal, yloc=yloc.abovebar)
+
+plotshape(filteredLong,  "过滤-BUY",  shape.xcross, location.belowbar, color.new(color.gray, 40), size=size.small)
+plotshape(filteredShort, "过滤-SELL", shape.xcross, location.abovebar, color.new(color.gray, 40), size=size.small)
+
+// ========== 8. 布林带 ==========
+plot(upper, "BB上轨", color=color.new(color.red,   80))
+plot(lower, "BB下轨", color=color.new(color.green, 80))
+plot(basis, "BB中轨", color=color.new(color.gray,  85))
+
+// ========== 9. 52 周高低点 ==========
+hi52Plot = plot(use52W ? hi52 : na, "52W 高", color=color.new(color.orange, 15), linewidth=2)
+lo52Plot = plot(use52W ? lo52 : na, "52W 低", color=color.new(color.blue,   15), linewidth=2)
+
+// ========== 10. 网格推荐区间 ==========
+dangerHighPlot = plot(showGridZones ? dangerHighLine : na, "危险高线",
+                      color=color.new(color.red, 50), linewidth=1)
+dangerLowPlot  = plot(showGridZones ? dangerLowLine : na, "危险低线",
+                      color=color.new(color.blue, 50), linewidth=1)
+midlinePlot    = plot(showGridZones and showMidline ? midline : na, "网格中位",
+                      color=color.new(color.yellow, 30), linewidth=1)
+
+fill(hi52Plot,       dangerHighPlot, color=showGridZones ? color.new(color.red,  90) : na, title="高点危险区")
+fill(dangerHighPlot, midlinePlot,    color=showGridZones ? color.new(color.red,  95) : na, title="空单网格区")
+fill(midlinePlot,    dangerLowPlot,  color=showGridZones ? color.new(color.green,95) : na, title="多单网格区")
+fill(dangerLowPlot,  lo52Plot,       color=showGridZones ? color.new(color.blue, 90) : na, title="低点危险区")
+
+// ========== 11. 网格分档线 ==========
+f_gridLine(float startP, float endP, int idx, int total) =>
+    step = (endP - startP) / total
+    startP + step * idx
+
+if showGridZones and showGridLines and barstate.islast
+    for i = 1 to gridCount - 1
+        price = f_gridLine(midline, dangerLowLine, i, gridCount)
+        line.new(bar_index - 30, price, bar_index + 5, price,
+                 color=color.new(color.green, 60), style=line.style_dotted, width=1)
+    for i = 1 to gridCount - 1
+        price = f_gridLine(midline, dangerHighLine, i, gridCount)
+        line.new(bar_index - 30, price, bar_index + 5, price,
+                 color=color.new(color.red, 60), style=line.style_dotted, width=1)
+
+// ========== 12. 背景提示 ==========
+bgcolor(use52W and nearHigh ? color.new(color.red,  93) : na, title="高点危险区背景")
+bgcolor(use52W and nearLow  ? color.new(color.blue, 93) : na, title="低点危险区背景")
+
+// ========== 13. 实时状态表(右上角) ==========
+var table info = table.new(position.top_right, 2, 9, border_width=1)
+if barstate.islast
+    status = nearHigh ? "🚫 禁开多网" : nearLow ? "🚫 禁开空网" : "✓ 双向可布网"
+    statusCol = nearHigh ? color.red : nearLow ? color.blue : color.green
+    longRange = midline - dangerLowLine
+    shortRange = dangerHighLine - midline
+    longStep = longRange / gridCount
+    shortStep = shortRange / gridCount
+
+    table.cell(info, 0, 0, "周线状态", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(info, 1, 0, status, bgcolor=color.new(statusCol, 30), text_color=color.white, text_size=size.small)
+    table.cell(info, 0, 1, "当前价", bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(info, 1, 1, str.tostring(close, "#.##"), text_color=color.white, text_size=size.small)
+    table.cell(info, 0, 2, "52W 高", bgcolor=color.new(color.orange, 70), text_color=color.white, text_size=size.small)
+    table.cell(info, 1, 2, str.tostring(hi52, "#.##"), text_color=color.white, text_size=size.small)
+    table.cell(info, 0, 3, "空网上限", bgcolor=color.new(color.red, 70), text_color=color.white, text_size=size.small)
+    table.cell(info, 1, 3, str.tostring(dangerHighLine, "#.##"), text_color=color.white, text_size=size.small)
+    table.cell(info, 0, 4, "网格中位", bgcolor=color.new(color.yellow, 60), text_color=color.black, text_size=size.small)
+    table.cell(info, 1, 4, str.tostring(midline, "#.##"), text_color=color.black, text_size=size.small)
+    table.cell(info, 0, 5, "多网下限", bgcolor=color.new(color.green, 70), text_color=color.white, text_size=size.small)
+    table.cell(info, 1, 5, str.tostring(dangerLowLine, "#.##"), text_color=color.white, text_size=size.small)
+    table.cell(info, 0, 6, "52W 低", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
+    table.cell(info, 1, 6, str.tostring(lo52, "#.##"), text_color=color.white, text_size=size.small)
+    table.cell(info, 0, 7, "多网步长", bgcolor=color.new(color.gray, 80), text_color=color.green, text_size=size.tiny)
+    table.cell(info, 1, 7, str.tostring(longStep, "#.##") + " (" + str.tostring(longStep / midline * 100, "#.##") + "%)", text_color=color.green, text_size=size.tiny)
+    table.cell(info, 0, 8, "空网步长", bgcolor=color.new(color.gray, 80), text_color=color.red, text_size=size.tiny)
+    table.cell(info, 1, 8, str.tostring(shortStep, "#.##") + " (" + str.tostring(shortStep / midline * 100, "#.##") + "%)", text_color=color.red, text_size=size.tiny)
+
+// ========== 14. 网格价位详细表(左下角) ==========
+var table priceTable = table.new(position.bottom_left, 4, 12, border_width=1)
+if showPriceTable and barstate.islast
+    table.cell(priceTable, 0, 0, "档位", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    table.cell(priceTable, 1, 0, "多网买入", bgcolor=color.new(color.green, 30), text_color=color.white, text_size=size.small)
+    table.cell(priceTable, 2, 0, "档位", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    table.cell(priceTable, 3, 0, "空网卖出", bgcolor=color.new(color.red, 30), text_color=color.white, text_size=size.small)
+
+    maxRows = math.min(gridCount, 10)
+    for i = 1 to maxRows
+        longPrice  = f_gridLine(midline, dangerLowLine, i, gridCount)
+        shortPrice = f_gridLine(midline, dangerHighLine, i, gridCount)
+        table.cell(priceTable, 0, i, "L" + str.tostring(i), bgcolor=color.new(color.green, 80), text_color=color.white, text_size=size.tiny)
+        table.cell(priceTable, 1, i, str.tostring(longPrice, "#.##"), text_color=color.green, text_size=size.tiny)
+        table.cell(priceTable, 2, i, "S" + str.tostring(i), bgcolor=color.new(color.red, 80), text_color=color.white, text_size=size.tiny)
+        table.cell(priceTable, 3, i, str.tostring(shortPrice, "#.##"), text_color=color.red, text_size=size.tiny)
+
+// ========== 15. 警报 ==========
+alertcondition(longSignal,  title="BUY 周线买入信号",  message="RSI+BB 周线 BUY 信号")
+alertcondition(shortSignal, title="SELL 周线卖出信号", message="RSI+BB 周线 SELL 信号")
+alertcondition(nearHigh and not nearHigh[1], title="进入高点危险区", message="ETH 周线进入52W高点危险区,暂停多单网格")
+alertcondition(nearLow  and not nearLow[1],  title="进入低点危险区", message="ETH 周线进入52W低点危险区,暂停空单网格")
+alertcondition(close > midline and close[1] <= midline, title="价格上穿中位", message="ETH 周线上穿网格中位,关注空网启动")
+alertcondition(close < midline and close[1] >= midline, title="价格下穿中位", message="ETH 周线下穿网格中位,关注多网启动")
