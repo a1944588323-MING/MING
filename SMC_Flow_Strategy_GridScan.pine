@@ -1,0 +1,176 @@
+//@version=6
+//==============================================================================
+// SMC Flow Strategy — Parameter Grid Scan Version
+// Use this on TradingView to manually compare presets & timeframes.
+//
+// Workflow:
+//   1) Select Preset (Conservative / Balanced / Aggressive / Custom)
+//   2) Switch chart timeframe (1H / 4H / 1D)
+//   3) Read Strategy Tester results + on-chart HUD panel
+//   4) Record Net%, Max DD, PF, Trades, then change preset and repeat
+//==============================================================================
+
+strategy("SMC Flow [Grid Scan]",
+     shorttitle="SMC Grid",
+     overlay=true,
+     initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=100,
+     commission_type=strategy.commission.percent,
+     commission_value=0.05,
+     slippage=2,
+     pyramiding=0,
+     calc_on_every_tick=false,
+     process_orders_on_close=true)
+
+// ============================================
+// PRESET SELECTOR
+// ============================================
+preset = input.string("Balanced", "Preset",
+     options=["Conservative", "Balanced", "Aggressive", "Trend-Rider", "Scalp", "Custom"],
+     group="Preset Selector",
+     tooltip="Conservative: low freq, high RR | Balanced: default | Aggressive: more trades | Trend-Rider: long hold, wide SL | Scalp: 1H tuned | Custom: use sliders below")
+
+// ---- Custom sliders (only used when preset = Custom) ----
+grpC = "Custom Parameters (only when preset = Custom)"
+cKey  = input.float(1.5, "UT Key Value",   minval=0.5, step=0.1,  group=grpC)
+cATR  = input.int  (10,  "UT ATR Period",  minval=1,             group=grpC)
+cHull = input.int  (55,  "Hull Length",                          group=grpC)
+cSwLb = input.int  (10,  "Swing Lookback", minval=3,             group=grpC)
+cSL   = input.float(2.0, "ATR x SL",       minval=0.5, step=0.1, group=grpC)
+cRR   = input.float(2.0, "R:R Ratio",      minval=0.5, step=0.1, group=grpC)
+cUseHull = input.bool(true, "Require Hull alignment", group=grpC)
+cUseBoS  = input.bool(true, "Require BoS confirmation", group=grpC)
+
+// ---- Resolve params from preset ----
+//             utKey utATR hullLen swLb slMult rrR  useHull useBoS
+[utKey, utATR, hullLen, swLb, slMult, rrR, useHull, useBoS] =
+  preset == "Conservative" ? [2.0,  14, 89, 14, 2.5, 3.0, true,  true ] :
+  preset == "Balanced"     ? [1.5,  10, 55, 10, 2.0, 2.0, true,  true ] :
+  preset == "Aggressive"   ? [1.0,   7, 34,  7, 1.5, 1.5, true,  false] :
+  preset == "Trend-Rider"  ? [2.5,  21, 89, 20, 3.0, 4.0, true,  true ] :
+  preset == "Scalp"        ? [1.0,   5, 21,  5, 1.2, 1.2, false, false] :
+                             [cKey, cATR, cHull, cSwLb, cSL, cRR, cUseHull, cUseBoS]
+
+// ============================================
+// BACKTEST WINDOW
+// ============================================
+fromY = input.int(2020, "From Year", group="Backtest Window")
+toY   = input.int(2099, "To Year",   group="Backtest Window")
+inWin = year >= fromY and year <= toY
+
+// ============================================
+// 1) UT BOT
+// ============================================
+xATR  = ta.atr(utATR)
+nLoss = utKey * xATR
+src   = close
+
+var float trail = 0.0
+trail := if src > nz(trail[1]) and src[1] > nz(trail[1])
+    math.max(nz(trail[1]), src - nLoss)
+else if src < nz(trail[1]) and src[1] < nz(trail[1])
+    math.min(nz(trail[1]), src + nLoss)
+else if src > nz(trail[1])
+    src - nLoss
+else
+    src + nLoss
+
+ema1   = ta.ema(src, 1)
+utBuy  = src > trail and ta.crossover(ema1, trail)
+utSell = src < trail and ta.crossover(trail, ema1)
+
+// ============================================
+// 2) HULL TREND FILTER
+// ============================================
+HMA(s, l) => ta.wma(2*ta.wma(s, l/2) - ta.wma(s, l), math.round(math.sqrt(l)))
+hullVal = HMA(close, hullLen)
+hullUp  = hullVal > hullVal[2]
+hullDn  = hullVal < hullVal[2]
+
+// ============================================
+// 3) MINI BoS
+// ============================================
+swingHi = ta.highest(high, swLb)[1]
+swingLo = ta.lowest (low,  swLb)[1]
+bosUp   = close > swingHi
+bosDn   = close < swingLo
+
+// ============================================
+// 4) ENTRY
+// ============================================
+longCond  = utBuy  and (not useHull or hullUp) and (not useBoS or bosUp)  and inWin
+shortCond = utSell and (not useHull or hullDn) and (not useBoS or bosDn) and inWin
+
+// ============================================
+// 5) RISK MANAGEMENT
+// ============================================
+var float slPx = na
+var float tpPx = na
+
+if longCond and strategy.position_size <= 0
+    strategy.entry("L", strategy.long)
+    slPx := close - slMult * xATR
+    tpPx := close + slMult * xATR * rrR
+
+if shortCond and strategy.position_size >= 0
+    strategy.entry("S", strategy.short)
+    slPx := close + slMult * xATR
+    tpPx := close - slMult * xATR * rrR
+
+if strategy.position_size > 0
+    strategy.exit("L-x", from_entry="L", stop=slPx, limit=tpPx)
+if strategy.position_size < 0
+    strategy.exit("S-x", from_entry="S", stop=slPx, limit=tpPx)
+
+if strategy.position_size > 0 and utSell
+    strategy.close("L", comment="UT flip")
+if strategy.position_size < 0 and utBuy
+    strategy.close("S", comment="UT flip")
+
+// ============================================
+// 6) ON-CHART HUD: Live preset & metrics
+// ============================================
+var table hud = table.new(position.top_right, 2, 9,
+     bgcolor=#1e222d, border_color=#373a46, frame_color=#373a46,
+     border_width=1, frame_width=1)
+
+f_eq() => strategy.equity
+f_dd() => strategy.max_drawdown / strategy.initial_capital * 100
+f_pf() => strategy.grossprofit / math.max(strategy.grossloss, 1)
+f_wr() => strategy.wintrades / math.max(strategy.closedtrades, 1) * 100
+f_net()=> (strategy.equity / strategy.initial_capital - 1) * 100
+
+// approximate annualization
+barsInYear = timeframe.in_seconds("1D") > 0 ? 365.0 * 86400.0 / timeframe.in_seconds() : 365.0
+yearsElapsed = (last_bar_index - 0) / barsInYear
+ann = yearsElapsed > 0.05 ? (math.pow(strategy.equity/strategy.initial_capital, 1/yearsElapsed) - 1) * 100 : na
+
+if barstate.islast
+    table.cell(hud, 0, 0, "Preset",        text_color=color.white,  bgcolor=#2962ff, text_halign=text.align_left)
+    table.cell(hud, 1, 0, preset,          text_color=color.white,  bgcolor=#2962ff)
+    table.cell(hud, 0, 1, "Timeframe",     text_color=color.white)
+    table.cell(hud, 1, 1, timeframe.period,text_color=color.yellow)
+    table.cell(hud, 0, 2, "Net %",         text_color=color.white)
+    table.cell(hud, 1, 2, str.tostring(f_net(), "#.##") + "%", text_color = f_net()>=0 ? color.lime : color.red)
+    table.cell(hud, 0, 3, "Annualized %",  text_color=color.white)
+    table.cell(hud, 1, 3, na(ann) ? "n/a" : str.tostring(ann, "#.##") + "%", text_color = nz(ann)>=0 ? color.lime : color.red)
+    table.cell(hud, 0, 4, "Max DD %",      text_color=color.white)
+    table.cell(hud, 1, 4, str.tostring(f_dd(), "#.##") + "%", text_color=color.orange)
+    table.cell(hud, 0, 5, "Profit Factor", text_color=color.white)
+    table.cell(hud, 1, 5, str.tostring(f_pf(), "#.##"),   text_color=color.aqua)
+    table.cell(hud, 0, 6, "Win Rate %",    text_color=color.white)
+    table.cell(hud, 1, 6, str.tostring(f_wr(), "#.##") + "%", text_color=color.aqua)
+    table.cell(hud, 0, 7, "# Trades",      text_color=color.white)
+    table.cell(hud, 1, 7, str.tostring(strategy.closedtrades), text_color=color.white)
+    table.cell(hud, 0, 8, "UT/Hull/Sw/SL/RR", text_color=color.gray, text_size=size.tiny)
+    table.cell(hud, 1, 8, str.format("{0}/{1} | H{2} | Sw{3} | SL{4}xATR | RR{5}",
+        utKey, utATR, hullLen, swLb, slMult, rrR), text_color=color.gray, text_size=size.tiny)
+
+// ============================================
+// 7) PLOTS
+// ============================================
+plot(trail,   "UT Trail", color = trail < close ? color.new(color.green,40) : color.new(color.red,40))
+plot(hullVal, "Hull",     color = hullUp ? color.lime : color.red, linewidth=2)
+plotshape(longCond,  "L", shape.triangleup,   location.belowbar, color.lime, size=size.small)
+plotshape(shortCond, "S", shape.triangledown, location.abovebar, color.red,  size=size.small)

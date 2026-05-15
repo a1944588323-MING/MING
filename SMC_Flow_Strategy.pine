@@ -1,0 +1,136 @@
+//@version=6
+//==============================================================================
+// SMC Flow Strategy (Backtestable Optimized Version)
+// Based on: AETHER FLOW SYSTEM by Fatich.id
+// Optimized & converted to strategy by Kiro
+//==============================================================================
+// Core entry rule (multi-confirmation):
+//   LONG  = UT Bot Buy  AND Hull trend up   AND price > previous swing high (mini BoS)
+//   SHORT = UT Bot Sell AND Hull trend down AND price < previous swing low  (mini BoS)
+//
+// Exit:
+//   - ATR-based stop loss
+//   - R:R take profit (default 2.0)
+//   - Or opposite UT Bot signal (whichever first)
+//==============================================================================
+
+strategy("SMC Flow Strategy [Optimized]",
+     shorttitle="SMC Flow Strat",
+     overlay=true,
+     initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=100,         // all-in per trade so % return = price return
+     commission_type=strategy.commission.percent,
+     commission_value=0.05,         // 0.05% taker fee per side
+     slippage=2,
+     pyramiding=0,
+     calc_on_every_tick=false,
+     process_orders_on_close=true)
+
+// ============================================
+// INPUTS
+// ============================================
+grpUT  = "UT Bot (Signal Engine)"
+utKey  = input.float(1.5, "Key Value (ATR mult)", minval=0.5, step=0.1, group=grpUT)   // 1.5 less noisy than 2
+utATR  = input.int  (10,  "ATR Period",          minval=1,            group=grpUT)    // 10 instead of 6
+
+grpHull = "Hull Trend Filter"
+hullLen = input.int (55,  "Hull Length",                          group=grpHull)
+useHull = input.bool(true,"Require Hull alignment",               group=grpHull)
+
+grpStr  = "Market Structure Filter"
+useBoS  = input.bool(true, "Require mini BoS confirmation",       group=grpStr)
+swingLb = input.int (10,   "Swing lookback",      minval=3,       group=grpStr)
+
+grpRisk = "Risk Management"
+useStop = input.bool(true, "Use ATR Stop Loss",                   group=grpRisk)
+slMult  = input.float(2.0, "SL = ATR x",  minval=0.5, step=0.1,   group=grpRisk)
+useTP   = input.bool(true, "Use R:R Take Profit",                 group=grpRisk)
+rrRatio = input.float(2.0, "R:R Ratio",   minval=0.5, step=0.1,   group=grpRisk)
+
+grpSes  = "Backtest Window"
+fromY = input.int(2020, "From Year",  group=grpSes)
+toY   = input.int(2099, "To Year",    group=grpSes)
+inWin = (year >= fromY) and (year <= toY)
+
+// ============================================
+// 1) UT BOT (denoised)
+// ============================================
+xATR  = ta.atr(utATR)
+nLoss = utKey * xATR
+src   = close
+
+var float trail = 0.0
+trail := if src > nz(trail[1]) and src[1] > nz(trail[1])
+    math.max(nz(trail[1]), src - nLoss)
+else if src < nz(trail[1]) and src[1] < nz(trail[1])
+    math.min(nz(trail[1]), src + nLoss)
+else if src > nz(trail[1])
+    src - nLoss
+else
+    src + nLoss
+
+ema1   = ta.ema(src, 1)
+utBuy  = src > trail and ta.crossover(ema1, trail)
+utSell = src < trail and ta.crossover(trail, ema1)
+
+// ============================================
+// 2) HULL TREND FILTER
+// ============================================
+HMA(s, l) => ta.wma(2*ta.wma(s, l/2) - ta.wma(s, l), math.round(math.sqrt(l)))
+hullVal = HMA(close, hullLen)
+hullUp  = hullVal > hullVal[2]
+hullDn  = hullVal < hullVal[2]
+
+// ============================================
+// 3) MINI BoS (lightweight market structure)
+// ============================================
+swingHi = ta.highest(high, swingLb)[1]
+swingLo = ta.lowest (low,  swingLb)[1]
+bosUp   = close > swingHi
+bosDn   = close < swingLo
+
+// ============================================
+// 4) ENTRY RULES
+// ============================================
+longCond  = utBuy  and (not useHull or hullUp) and (not useBoS or bosUp)  and inWin
+shortCond = utSell and (not useHull or hullDn) and (not useBoS or bosDn) and inWin
+
+// ============================================
+// 5) EXECUTE TRADES + RISK MANAGEMENT
+// ============================================
+var float entryPx = na
+var float slPx    = na
+var float tpPx    = na
+
+if longCond and strategy.position_size <= 0
+    strategy.entry("L", strategy.long)
+    entryPx := close
+    slPx    := useStop ? close - slMult * xATR : na
+    tpPx    := useTP   ? close + slMult * xATR * rrRatio : na
+
+if shortCond and strategy.position_size >= 0
+    strategy.entry("S", strategy.short)
+    entryPx := close
+    slPx    := useStop ? close + slMult * xATR : na
+    tpPx    := useTP   ? close - slMult * xATR * rrRatio : na
+
+// SL/TP via stop+limit exits
+if strategy.position_size > 0
+    strategy.exit("L-x", from_entry="L", stop=slPx, limit=tpPx)
+if strategy.position_size < 0
+    strategy.exit("S-x", from_entry="S", stop=slPx, limit=tpPx)
+
+// Reverse-on-opposite-signal
+if strategy.position_size > 0 and utSell
+    strategy.close("L", comment="UT flip")
+if strategy.position_size < 0 and utBuy
+    strategy.close("S", comment="UT flip")
+
+// ============================================
+// 6) PLOTS
+// ============================================
+plot(trail,   "UT Trail", color = trail < close ? color.new(color.green,40) : color.new(color.red,40))
+plot(hullVal, "Hull",     color = hullUp ? color.lime : color.red, linewidth=2)
+plotshape(longCond,  "Long",  shape.triangleup,   location.belowbar, color.lime, size=size.small)
+plotshape(shortCond, "Short", shape.triangledown, location.abovebar, color.red,  size=size.small)

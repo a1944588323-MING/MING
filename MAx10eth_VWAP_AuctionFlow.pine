@@ -1,0 +1,176 @@
+//@version=6
+//==============================================================================
+// MAx10eth VWAP Auction Flow — 蒸馏自 @MAx10eth 推特交易方法
+//==============================================================================
+// 核心要素(对应推文原话):
+//   1. Anchored VWAP + 标准差带 (替代 Value Area High/Low)
+//   2. Single Prints / 流动性枢轴(替代 TPO single prints)
+//   3. 高点背离检测(RSI 顶/底背离)
+//   4. Absorption 检测(大单 + 小波动 = 吸筹)
+//   5. 自动多空信号:VWAP reclaim + 上方有 SP 撑 / 高点 SP + 背离
+//==============================================================================
+
+indicator("MAx10eth VWAP Auction Flow", overlay=true,
+     max_lines_count=500, max_labels_count=500, max_boxes_count=300)
+
+// ============== INPUTS ==============
+grpV  = "VWAP"
+anchor = input.string("Day", "VWAP Anchor", options=["Session", "Day", "Week", "Month"], group=grpV)
+showBands = input.bool(true, "Show Std-Dev Bands (≈ VAH/VAL)", group=grpV)
+band1 = input.float(1.0, "Band 1 (≈ Value Area)", step=0.1, group=grpV)
+band2 = input.float(2.0, "Band 2 (Outer)",        step=0.1, group=grpV)
+
+grpSP = "Single Prints / Liquidity Pivots"
+spLen = input.int(10, "Pivot lookback", group=grpSP)
+showSP = input.bool(true, "Show SP/Liquidity levels", group=grpSP)
+
+grpD = "Divergence"
+rsiLen = input.int(14, "RSI Length", group=grpD)
+showDiv = input.bool(true, "Show Divergence labels", group=grpD)
+
+grpA = "Absorption"
+absorbMult = input.float(2.0, "Volume spike >x avg", step=0.1, group=grpA)
+absorbRangeMax = input.float(0.6, "Bar range < x ATR (small move)", step=0.1, group=grpA)
+
+grpS = "Signals"
+showSignals = input.bool(true, "Show Buy/Sell signals", group=grpS)
+alertOn = input.bool(true, "Enable alerts", group=grpS)
+
+// ============== VWAP + BANDS ==============
+isNewSession = switch anchor
+    "Session" => ta.change(time("D")) != 0
+    "Day"     => ta.change(time("D")) != 0
+    "Week"    => ta.change(time("W")) != 0
+    "Month"   => ta.change(time("M")) != 0
+
+var float cumPV = 0.0
+var float cumV  = 0.0
+var float cumPV2= 0.0
+var int   cnt   = 0
+src = hlc3
+if isNewSession
+    cumPV := 0.0, cumV := 0.0, cumPV2 := 0.0, cnt := 0
+cumPV  += src * volume
+cumV   += volume
+cnt    += 1
+vwap    = cumV > 0 ? cumPV / cumV : src
+cumPV2 += math.pow(src - vwap, 2) * volume
+sigma   = cumV > 0 ? math.sqrt(cumPV2 / cumV) : 0
+
+upper1 = vwap + band1 * sigma
+lower1 = vwap - band1 * sigma
+upper2 = vwap + band2 * sigma
+lower2 = vwap - band2 * sigma
+
+plot(vwap,   "VWAP",   color.new(color.yellow, 0), 2)
+plot(showBands ? upper1 : na, "VAH",  color.new(color.red, 30))
+plot(showBands ? lower1 : na, "VAL",  color.new(color.green, 30))
+plot(showBands ? upper2 : na, "Outer+", color.new(color.red, 70))
+plot(showBands ? lower2 : na, "Outer-", color.new(color.green, 70))
+
+fill(plot(upper1, display=display.none), plot(lower1, display=display.none), color.new(color.yellow, 92), title="VA fill")
+
+// ============== SINGLE PRINTS / LIQUIDITY PIVOTS ==============
+ph = ta.pivothigh(high, spLen, spLen)
+pl = ta.pivotlow (low,  spLen, spLen)
+
+var float lastPH = na
+var float lastPL = na
+if not na(ph)
+    lastPH := ph
+    if showSP
+        line.new(bar_index - spLen, ph, bar_index + 30, ph, color=color.new(color.red, 30), style=line.style_dashed)
+        label.new(bar_index + 30, ph, "SP↑", color=color.new(color.red, 70), style=label.style_label_left, textcolor=color.white, size=size.tiny)
+if not na(pl)
+    lastPL := pl
+    if showSP
+        line.new(bar_index - spLen, pl, bar_index + 30, pl, color=color.new(color.green, 30), style=line.style_dashed)
+        label.new(bar_index + 30, pl, "SP↓", color=color.new(color.green, 70), style=label.style_label_left, textcolor=color.white, size=size.tiny)
+
+// ============== RSI DIVERGENCE ==============
+rsi = ta.rsi(close, rsiLen)
+// bearish divergence: price higher high, rsi lower high (at last 2 pivot highs)
+var float lastPH_rsi = na
+var float prevPH = na
+var float prevPH_rsi = na
+if not na(ph)
+    prevPH := lastPH != ph ? lastPH : prevPH
+    prevPH_rsi := lastPH_rsi
+    lastPH_rsi := rsi[spLen]
+bearDiv = not na(prevPH) and not na(lastPH_rsi) and not na(prevPH_rsi) and ph > prevPH and lastPH_rsi < prevPH_rsi
+
+var float lastPL_rsi = na
+var float prevPL = na
+var float prevPL_rsi = na
+if not na(pl)
+    prevPL := lastPL != pl ? lastPL : prevPL
+    prevPL_rsi := lastPL_rsi
+    lastPL_rsi := rsi[spLen]
+bullDiv = not na(prevPL) and not na(lastPL_rsi) and not na(prevPL_rsi) and pl < prevPL and lastPL_rsi > prevPL_rsi
+
+if showDiv and bearDiv
+    label.new(bar_index - spLen, ph, "BearDiv", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
+if showDiv and bullDiv
+    label.new(bar_index - spLen, pl, "BullDiv", color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small)
+
+// ============== ABSORPTION ==============
+volSMA = ta.sma(volume, 20)
+atr14  = ta.atr(14)
+isHighVol  = volume > volSMA * absorbMult
+isSmallBar = (high - low) < atr14 * absorbRangeMax
+absorption = isHighVol and isSmallBar
+
+if absorption
+    label.new(bar_index, low, "ABS", color=color.new(color.aqua, 30), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+
+// ============== SIGNAL LOGIC (mirrors @MAx10eth's tweets) ==============
+// LONG: price reclaims VWAP from below + above last SP_low + (absorption OR bullDiv recently)
+reclaimVWAPup = ta.crossover(close, vwap)
+reclaimVWAPdn = ta.crossunder(close, vwap)
+
+aboveSP = not na(lastPL) and close > lastPL
+belowSP = not na(lastPH) and close < lastPH
+
+absorbRecent = ta.barssince(absorption) <= 5
+bullDivRecent = ta.barssince(bullDiv) <= 10
+bearDivRecent = ta.barssince(bearDiv) <= 10
+
+longSig  = reclaimVWAPup and aboveSP and (absorbRecent or bullDivRecent)
+shortSig = reclaimVWAPdn and belowSP and (absorbRecent or bearDivRecent)
+
+// Quality grades
+gradeLong = longSig and absorbRecent and bullDivRecent ? "S" :
+             longSig and (absorbRecent or bullDivRecent) ? "A" :
+             longSig ? "B" : ""
+gradeShort = shortSig and absorbRecent and bearDivRecent ? "S" :
+              shortSig and (absorbRecent or bearDivRecent) ? "A" :
+              shortSig ? "B" : ""
+
+if showSignals and longSig
+    label.new(bar_index, low, "LONG " + gradeLong, color=color.new(color.green, 0), textcolor=color.white, style=label.style_label_up, size=size.normal)
+if showSignals and shortSig
+    label.new(bar_index, high, "SHORT " + gradeShort, color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, size=size.normal)
+
+if alertOn and longSig
+    alert("MAx10eth LONG " + gradeLong + " @ " + str.tostring(close), alert.freq_once_per_bar)
+if alertOn and shortSig
+    alert("MAx10eth SHORT " + gradeShort + " @ " + str.tostring(close), alert.freq_once_per_bar)
+
+// ============== HUD ==============
+var table hud = table.new(position.top_left, 2, 7, bgcolor=#1e222d, border_color=#373a46, border_width=1, frame_color=#373a46, frame_width=1)
+if barstate.islast
+    table.cell(hud, 0, 0, "Strategy", text_color=color.white, bgcolor=#2962ff)
+    table.cell(hud, 1, 0, "MAx10eth Auction", text_color=color.white, bgcolor=#2962ff)
+    table.cell(hud, 0, 1, "VWAP",     text_color=color.white)
+    table.cell(hud, 1, 1, str.tostring(vwap, format.mintick), text_color=color.yellow)
+    table.cell(hud, 0, 2, "VAH",      text_color=color.white)
+    table.cell(hud, 1, 2, str.tostring(upper1, format.mintick), text_color=color.red)
+    table.cell(hud, 0, 3, "VAL",      text_color=color.white)
+    table.cell(hud, 1, 3, str.tostring(lower1, format.mintick), text_color=color.green)
+    table.cell(hud, 0, 4, "Last SP↑", text_color=color.white)
+    table.cell(hud, 1, 4, na(lastPH) ? "—" : str.tostring(lastPH, format.mintick), text_color=color.red)
+    table.cell(hud, 0, 5, "Last SP↓", text_color=color.white)
+    table.cell(hud, 1, 5, na(lastPL) ? "—" : str.tostring(lastPL, format.mintick), text_color=color.green)
+    posState = close > vwap and aboveSP ? "BULL" : close < vwap and belowSP ? "BEAR" : "NEUTRAL"
+    table.cell(hud, 0, 6, "Auction",  text_color=color.white)
+    table.cell(hud, 1, 6, posState, text_color = posState=="BULL" ? color.lime : posState=="BEAR" ? color.red : color.gray)
