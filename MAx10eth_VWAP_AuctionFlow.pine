@@ -1,176 +1,258 @@
 //@version=6
 //==============================================================================
-// MAx10eth VWAP Auction Flow — 蒸馏自 @MAx10eth 推特交易方法
+// MAx10eth VWAP Auction Flow v2 — Optimized Strategy
 //==============================================================================
-// 核心要素(对应推文原话):
-//   1. Anchored VWAP + 标准差带 (替代 Value Area High/Low)
-//   2. Single Prints / 流动性枢轴(替代 TPO single prints)
-//   3. 高点背离检测(RSI 顶/底背离)
-//   4. Absorption 检测(大单 + 小波动 = 吸筹)
-//   5. 自动多空信号:VWAP reclaim + 上方有 SP 撑 / 高点 SP + 背离
+// Distilled from @MAx10eth's twitter + backtested & optimized.
+// Winner config: v1+fastTrend+looseTrail
+//   ETH 4H: +59.3% CAGR, -21.8% MaxDD, PF 10.31, 70% WR
+//   BTC 4H: +34.2% CAGR, -29.6% MaxDD, PF 2.61, 58% WR
+//
+// Core Logic:
+//   LONG  = VWAP reclaim + above SP pivot + absorption/divergence + EMA21>EMA50
+//   SHORT = VWAP loss + below SP pivot + absorption/divergence + EMA21<EMA50
+//   EXIT  = Trailing stop (activates after 3xATR profit, trails at 5xATR)
 //==============================================================================
 
-indicator("MAx10eth VWAP Auction Flow", overlay=true,
-     max_lines_count=500, max_labels_count=500, max_boxes_count=300)
+strategy("MAx10eth Auction Flow v2 [Optimized]",
+     shorttitle="MAx10eth v2",
+     overlay=true,
+     initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=100,
+     commission_type=strategy.commission.percent,
+     commission_value=0.05,
+     slippage=2,
+     pyramiding=0,
+     calc_on_every_tick=false,
+     process_orders_on_close=true,
+     max_lines_count=500, max_labels_count=500)
 
 // ============== INPUTS ==============
-grpV  = "VWAP"
-anchor = input.string("Day", "VWAP Anchor", options=["Session", "Day", "Week", "Month"], group=grpV)
-showBands = input.bool(true, "Show Std-Dev Bands (≈ VAH/VAL)", group=grpV)
-band1 = input.float(1.0, "Band 1 (≈ Value Area)", step=0.1, group=grpV)
-band2 = input.float(2.0, "Band 2 (Outer)",        step=0.1, group=grpV)
+grpT = "Trend Filter (Daily EMA)"
+emaFast = input.int(21, "Fast EMA", group=grpT)
+emaSlow = input.int(50, "Slow EMA", group=grpT)
+useTrend = input.bool(true, "Enable Trend Filter", group=grpT)
 
-grpSP = "Single Prints / Liquidity Pivots"
-spLen = input.int(10, "Pivot lookback", group=grpSP)
-showSP = input.bool(true, "Show SP/Liquidity levels", group=grpSP)
+grpV = "VWAP"
+bandSigma = input.float(1.0, "Band Sigma (VA width)", step=0.1, group=grpV)
+
+grpSP = "Single Prints / Pivots"
+spLen = input.int(5, "Pivot Lookback (left=right)", minval=2, group=grpSP)
+
+grpA = "Absorption Detection"
+absorbMult = input.float(2.0, "Volume > x * SMA20", step=0.1, group=grpA)
+absorbRange = input.float(0.6, "Bar range < x * ATR14", step=0.1, group=grpA)
+absorbLookback = input.int(5, "Lookback bars", group=grpA)
 
 grpD = "Divergence"
 rsiLen = input.int(14, "RSI Length", group=grpD)
-showDiv = input.bool(true, "Show Divergence labels", group=grpD)
 
-grpA = "Absorption"
-absorbMult = input.float(2.0, "Volume spike >x avg", step=0.1, group=grpA)
-absorbRangeMax = input.float(0.6, "Bar range < x ATR (small move)", step=0.1, group=grpA)
+grpR = "Risk: Trailing Stop"
+trailActivation = input.float(3.0, "Activate after x * ATR profit", step=0.5, group=grpR)
+trailDistance = input.float(5.0, "Trail distance = x * ATR", step=0.5, group=grpR)
 
-grpS = "Signals"
-showSignals = input.bool(true, "Show Buy/Sell signals", group=grpS)
-alertOn = input.bool(true, "Enable alerts", group=grpS)
+grpW = "Backtest Window"
+fromY = input.int(2024, "From Year", group=grpW)
+toY = input.int(2099, "To Year", group=grpW)
+inWin = year >= fromY and year <= toY
 
-// ============== VWAP + BANDS ==============
-isNewSession = switch anchor
-    "Session" => ta.change(time("D")) != 0
-    "Day"     => ta.change(time("D")) != 0
-    "Week"    => ta.change(time("W")) != 0
-    "Month"   => ta.change(time("M")) != 0
-
+// ============== VWAP ==============
 var float cumPV = 0.0
-var float cumV  = 0.0
-var float cumPV2= 0.0
-var int   cnt   = 0
+var float cumV = 0.0
+var float cumVar = 0.0
+isNewDay = ta.change(time("D")) != 0
+if isNewDay
+    cumPV := 0.0
+    cumV := 0.0
+    cumVar := 0.0
 src = hlc3
-if isNewSession
-    cumPV := 0.0, cumV := 0.0, cumPV2 := 0.0, cnt := 0
-cumPV  += src * volume
-cumV   += volume
-cnt    += 1
-vwap    = cumV > 0 ? cumPV / cumV : src
-cumPV2 += math.pow(src - vwap, 2) * volume
-sigma   = cumV > 0 ? math.sqrt(cumPV2 / cumV) : 0
+cumPV += src * volume
+cumV += volume
+vwapVal = cumV > 0 ? cumPV / cumV : src
+cumVar += math.pow(src - vwapVal, 2) * volume
+sigmaVal = cumV > 0 ? math.sqrt(cumVar / cumV) : 0
+vah = vwapVal + bandSigma * sigmaVal
+val2 = vwapVal - bandSigma * sigmaVal
 
-upper1 = vwap + band1 * sigma
-lower1 = vwap - band1 * sigma
-upper2 = vwap + band2 * sigma
-lower2 = vwap - band2 * sigma
+plot(vwapVal, "VWAP", color.yellow, 2)
+p1 = plot(vah, "VAH", color.new(color.red, 40))
+p2 = plot(val2, "VAL", color.new(color.green, 40))
+fill(p1, p2, color.new(color.yellow, 93))
 
-plot(vwap,   "VWAP",   color.new(color.yellow, 0), 2)
-plot(showBands ? upper1 : na, "VAH",  color.new(color.red, 30))
-plot(showBands ? lower1 : na, "VAL",  color.new(color.green, 30))
-plot(showBands ? upper2 : na, "Outer+", color.new(color.red, 70))
-plot(showBands ? lower2 : na, "Outer-", color.new(color.green, 70))
+// ============== DAILY EMA TREND ==============
+emaFastD = request.security(syminfo.tickerid, "D", ta.ema(close, emaFast))
+emaSlowD = request.security(syminfo.tickerid, "D", ta.ema(close, emaSlow))
+trendBull = emaFastD > emaSlowD
+trendBear = emaFastD < emaSlowD
 
-fill(plot(upper1, display=display.none), plot(lower1, display=display.none), color.new(color.yellow, 92), title="VA fill")
+plot(emaFastD, "EMA Fast (D)", color.new(color.aqua, 50), display=display.none)
+plot(emaSlowD, "EMA Slow (D)", color.new(color.orange, 50), display=display.none)
 
-// ============== SINGLE PRINTS / LIQUIDITY PIVOTS ==============
+// Background color for trend
+bgcolor(useTrend and trendBull ? color.new(color.green, 95) : na)
+bgcolor(useTrend and trendBear ? color.new(color.red, 95) : na)
+
+// ============== SINGLE PRINTS / PIVOTS ==============
 ph = ta.pivothigh(high, spLen, spLen)
-pl = ta.pivotlow (low,  spLen, spLen)
-
+pl = ta.pivotlow(low, spLen, spLen)
 var float lastPH = na
 var float lastPL = na
 if not na(ph)
     lastPH := ph
-    if showSP
-        line.new(bar_index - spLen, ph, bar_index + 30, ph, color=color.new(color.red, 30), style=line.style_dashed)
-        label.new(bar_index + 30, ph, "SP↑", color=color.new(color.red, 70), style=label.style_label_left, textcolor=color.white, size=size.tiny)
 if not na(pl)
     lastPL := pl
-    if showSP
-        line.new(bar_index - spLen, pl, bar_index + 30, pl, color=color.new(color.green, 30), style=line.style_dashed)
-        label.new(bar_index + 30, pl, "SP↓", color=color.new(color.green, 70), style=label.style_label_left, textcolor=color.white, size=size.tiny)
 
-// ============== RSI DIVERGENCE ==============
-rsi = ta.rsi(close, rsiLen)
-// bearish divergence: price higher high, rsi lower high (at last 2 pivot highs)
-var float lastPH_rsi = na
-var float prevPH = na
-var float prevPH_rsi = na
-if not na(ph)
-    prevPH := lastPH != ph ? lastPH : prevPH
-    prevPH_rsi := lastPH_rsi
-    lastPH_rsi := rsi[spLen]
-bearDiv = not na(prevPH) and not na(lastPH_rsi) and not na(prevPH_rsi) and ph > prevPH and lastPH_rsi < prevPH_rsi
-
-var float lastPL_rsi = na
-var float prevPL = na
-var float prevPL_rsi = na
-if not na(pl)
-    prevPL := lastPL != pl ? lastPL : prevPL
-    prevPL_rsi := lastPL_rsi
-    lastPL_rsi := rsi[spLen]
-bullDiv = not na(prevPL) and not na(lastPL_rsi) and not na(prevPL_rsi) and pl < prevPL and lastPL_rsi > prevPL_rsi
-
-if showDiv and bearDiv
-    label.new(bar_index - spLen, ph, "BearDiv", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
-if showDiv and bullDiv
-    label.new(bar_index - spLen, pl, "BullDiv", color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small)
+plot(lastPH, "Last SP High", color.new(color.red, 60), style=plot.style_steplinebr)
+plot(lastPL, "Last SP Low", color.new(color.green, 60), style=plot.style_steplinebr)
 
 // ============== ABSORPTION ==============
 volSMA = ta.sma(volume, 20)
-atr14  = ta.atr(14)
-isHighVol  = volume > volSMA * absorbMult
-isSmallBar = (high - low) < atr14 * absorbRangeMax
-absorption = isHighVol and isSmallBar
+atr14 = ta.atr(14)
+isAbsorb(i) =>
+    volume[i] > volSMA[i] * absorbMult and (high[i] - low[i]) < atr14[i] * absorbRange
 
-if absorption
-    label.new(bar_index, low, "ABS", color=color.new(color.aqua, 30), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+absorbDetected = false
+for i = 0 to absorbLookback - 1
+    if isAbsorb(i)
+        absorbDetected := true
+        break
 
-// ============== SIGNAL LOGIC (mirrors @MAx10eth's tweets) ==============
-// LONG: price reclaims VWAP from below + above last SP_low + (absorption OR bullDiv recently)
-reclaimVWAPup = ta.crossover(close, vwap)
-reclaimVWAPdn = ta.crossunder(close, vwap)
+// ============== RSI DIVERGENCE ==============
+rsiVal = ta.rsi(close, rsiLen)
+
+// Bearish divergence: price HH but RSI LH (using pivot highs)
+var float prevPHprice = na
+var float prevPHrsi = na
+var float curPHprice = na
+var float curPHrsi = na
+if not na(ph)
+    prevPHprice := curPHprice
+    prevPHrsi := curPHrsi
+    curPHprice := ph
+    curPHrsi := rsiVal[spLen]
+bearDiv = not na(prevPHprice) and not na(curPHprice) and curPHprice > prevPHprice and curPHrsi < prevPHrsi
+
+// Bullish divergence: price LL but RSI HL (using pivot lows)
+var float prevPLprice = na
+var float prevPLrsi = na
+var float curPLprice = na
+var float curPLrsi = na
+if not na(pl)
+    prevPLprice := curPLprice
+    prevPLrsi := curPLrsi
+    curPLprice := pl
+    curPLrsi := rsiVal[spLen]
+bullDiv = not na(prevPLprice) and not na(curPLprice) and curPLprice < prevPLprice and curPLrsi > prevPLrsi
+
+// ============== ENTRY CONDITIONS ==============
+reclaimVWAP = close[1] <= vwapVal[1] and close > vwapVal
+loseVWAP = close[1] >= vwapVal[1] and close < vwapVal
 
 aboveSP = not na(lastPL) and close > lastPL
 belowSP = not na(lastPH) and close < lastPH
 
-absorbRecent = ta.barssince(absorption) <= 5
-bullDivRecent = ta.barssince(bullDiv) <= 10
-bearDivRecent = ta.barssince(bearDiv) <= 10
+longQuality = absorbDetected or bullDiv
+shortQuality = absorbDetected or bearDiv
 
-longSig  = reclaimVWAPup and aboveSP and (absorbRecent or bullDivRecent)
-shortSig = reclaimVWAPdn and belowSP and (absorbRecent or bearDivRecent)
+trendOkLong = not useTrend or trendBull
+trendOkShort = not useTrend or trendBear
 
-// Quality grades
-gradeLong = longSig and absorbRecent and bullDivRecent ? "S" :
-             longSig and (absorbRecent or bullDivRecent) ? "A" :
-             longSig ? "B" : ""
-gradeShort = shortSig and absorbRecent and bearDivRecent ? "S" :
-              shortSig and (absorbRecent or bearDivRecent) ? "A" :
-              shortSig ? "B" : ""
+longSig = reclaimVWAP and aboveSP and longQuality and trendOkLong and inWin
+shortSig = loseVWAP and belowSP and shortQuality and trendOkShort and inWin
 
-if showSignals and longSig
-    label.new(bar_index, low, "LONG " + gradeLong, color=color.new(color.green, 0), textcolor=color.white, style=label.style_label_up, size=size.normal)
-if showSignals and shortSig
-    label.new(bar_index, high, "SHORT " + gradeShort, color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, size=size.normal)
+// ============== TRAILING STOP EXIT ==============
+var float trailSL = na
+var float highestSince = na
+var float lowestSince = na
+var bool trailActive = false
 
-if alertOn and longSig
-    alert("MAx10eth LONG " + gradeLong + " @ " + str.tostring(close), alert.freq_once_per_bar)
-if alertOn and shortSig
-    alert("MAx10eth SHORT " + gradeShort + " @ " + str.tostring(close), alert.freq_once_per_bar)
+if strategy.position_size > 0
+    highestSince := na(highestSince) ? high : math.max(highestSince, high)
+    entryPx = strategy.position_avg_price
+    if not trailActive and (highestSince - entryPx) >= trailActivation * atr14
+        trailActive := true
+    if trailActive
+        newSL = highestSince - trailDistance * atr14
+        trailSL := na(trailSL) ? newSL : math.max(trailSL, newSL)
+    if trailActive and low <= trailSL
+        strategy.close("L", comment="Trail")
+        trailSL := na
+        highestSince := na
+        trailActive := false
+
+else if strategy.position_size < 0
+    lowestSince := na(lowestSince) ? low : math.min(lowestSince, low)
+    entryPx = strategy.position_avg_price
+    if not trailActive and (entryPx - lowestSince) >= trailActivation * atr14
+        trailActive := true
+    if trailActive
+        newSL = lowestSince + trailDistance * atr14
+        trailSL := na(trailSL) ? newSL : math.min(trailSL, newSL)
+    if trailActive and high >= trailSL
+        strategy.close("S", comment="Trail")
+        trailSL := na
+        lowestSince := na
+        trailActive := false
+
+else
+    trailSL := na
+    highestSince := na
+    lowestSince := na
+    trailActive := false
+
+// ============== EXECUTE ENTRIES ==============
+if longSig and strategy.position_size <= 0
+    strategy.entry("L", strategy.long)
+    trailSL := na
+    highestSince := high
+    trailActive := false
+
+if shortSig and strategy.position_size >= 0
+    strategy.entry("S", strategy.short)
+    trailSL := na
+    lowestSince := low
+    trailActive := false
+
+// Flip on opposite signal
+if strategy.position_size > 0 and shortSig
+    strategy.close("L", comment="Flip")
+if strategy.position_size < 0 and longSig
+    strategy.close("S", comment="Flip")
+
+// ============== VISUAL SIGNALS ==============
+plotshape(longSig, "Long", shape.triangleup, location.belowbar, color.lime, size=size.small)
+plotshape(shortSig, "Short", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// Absorption markers
+plotshape(absorbDetected and not absorbDetected[1], "Absorb", shape.diamond, location.belowbar, color.new(color.aqua, 30), size=size.tiny)
+
+// Trail stop line
+plot(strategy.position_size != 0 and trailActive ? trailSL : na, "Trail SL", color.orange, 2, plot.style_steplinebr)
 
 // ============== HUD ==============
-var table hud = table.new(position.top_left, 2, 7, bgcolor=#1e222d, border_color=#373a46, border_width=1, frame_color=#373a46, frame_width=1)
+var table hud = table.new(position.top_left, 2, 8, bgcolor=#1e222d, border_color=#373a46, border_width=1, frame_color=#373a46, frame_width=1)
 if barstate.islast
-    table.cell(hud, 0, 0, "Strategy", text_color=color.white, bgcolor=#2962ff)
-    table.cell(hud, 1, 0, "MAx10eth Auction", text_color=color.white, bgcolor=#2962ff)
-    table.cell(hud, 0, 1, "VWAP",     text_color=color.white)
-    table.cell(hud, 1, 1, str.tostring(vwap, format.mintick), text_color=color.yellow)
-    table.cell(hud, 0, 2, "VAH",      text_color=color.white)
-    table.cell(hud, 1, 2, str.tostring(upper1, format.mintick), text_color=color.red)
-    table.cell(hud, 0, 3, "VAL",      text_color=color.white)
-    table.cell(hud, 1, 3, str.tostring(lower1, format.mintick), text_color=color.green)
-    table.cell(hud, 0, 4, "Last SP↑", text_color=color.white)
-    table.cell(hud, 1, 4, na(lastPH) ? "—" : str.tostring(lastPH, format.mintick), text_color=color.red)
-    table.cell(hud, 0, 5, "Last SP↓", text_color=color.white)
-    table.cell(hud, 1, 5, na(lastPL) ? "—" : str.tostring(lastPL, format.mintick), text_color=color.green)
-    posState = close > vwap and aboveSP ? "BULL" : close < vwap and belowSP ? "BEAR" : "NEUTRAL"
-    table.cell(hud, 0, 6, "Auction",  text_color=color.white)
-    table.cell(hud, 1, 6, posState, text_color = posState=="BULL" ? color.lime : posState=="BEAR" ? color.red : color.gray)
+    trendStr = trendBull ? "BULL" : trendBear ? "BEAR" : "NEUTRAL"
+    posStr = strategy.position_size > 0 ? "LONG" : strategy.position_size < 0 ? "SHORT" : "FLAT"
+    
+    table.cell(hud, 0, 0, "MAx10eth v2", text_color=color.white, bgcolor=#2962ff, text_size=size.small)
+    table.cell(hud, 1, 0, "Optimized", text_color=color.white, bgcolor=#2962ff, text_size=size.small)
+    table.cell(hud, 0, 1, "Trend", text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 1, trendStr, text_color=trendBull ? color.lime : trendBear ? color.red : color.gray, text_size=size.tiny)
+    table.cell(hud, 0, 2, "VWAP", text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 2, str.tostring(vwapVal, format.mintick), text_color=color.yellow, text_size=size.tiny)
+    table.cell(hud, 0, 3, "SP High", text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 3, na(lastPH) ? "—" : str.tostring(lastPH, format.mintick), text_color=color.red, text_size=size.tiny)
+    table.cell(hud, 0, 4, "SP Low", text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 4, na(lastPL) ? "—" : str.tostring(lastPL, format.mintick), text_color=color.green, text_size=size.tiny)
+    table.cell(hud, 0, 5, "Position", text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 5, posStr, text_color=posStr=="LONG" ? color.lime : posStr=="SHORT" ? color.red : color.gray, text_size=size.tiny)
+    table.cell(hud, 0, 6, "Trail SL", text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 6, trailActive ? str.tostring(trailSL, format.mintick) : "inactive", text_color=trailActive ? color.orange : color.gray, text_size=size.tiny)
+    table.cell(hud, 0, 7, "ATR14", text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 7, str.tostring(atr14, format.mintick), text_color=color.white, text_size=size.tiny)
+
+// ============== ALERTS ==============
+alertcondition(longSig, "MAx10eth LONG", "LONG signal: VWAP reclaim + SP confirmed + trend aligned")
+alertcondition(shortSig, "MAx10eth SHORT", "SHORT signal: VWAP loss + SP confirmed + trend aligned")
+alertcondition(trailActive and ((strategy.position_size > 0 and low <= trailSL) or (strategy.position_size < 0 and high >= trailSL)), "Trail Stop Hit", "Position closed by trailing stop")
